@@ -1128,3 +1128,34 @@ test "toml spells an inserted key's name bare when it can, else as an escaped ba
     try ed.insertNamedKey(&.{}, "line\nbreak", "4");
     try expectTomlSource(&ed, "a = 1\nb-2 = 2\n\"has space\" = 3\n\"line\\nbreak\" = 4\n");
 }
+
+// --- a replaced string keeps its quote style (`renderString`) ---
+
+test "toml a string replacing a literal string stays literal where it can" {
+    var ed = try newTomlEditor("path = 'C:\\dir'\n");
+    defer ed.deinit();
+    try ed.replaceStringAtPath(&.{.{ .key = "path" }}, "\"D:\\\\x\"", "D:\\x");
+    try expectTomlSource(&ed, "path = 'D:\\x'\n");
+    // A `'` it cannot hold: the basic string the caller rendered.
+    try ed.replaceStringAtPath(&.{.{ .key = "path" }}, "\"it's\"", "it's");
+    try expectTomlSource(&ed, "path = \"it's\"\n");
+}
+
+test "toml a basic string stays the printer's" {
+    var ed = try newTomlEditor("a = \"x\"\n");
+    defer ed.deinit();
+    try ed.replaceStringAtPath(&.{.{ .key = "a" }}, "\"y\"", "y");
+    try expectTomlSource(&ed, "a = \"y\"\n");
+}
+
+test "toml multi-line strings keep their delimiters and the break after the opener" {
+    var ed = try newTomlEditor("a = '''\none\n'''\nb = \"\"\"x\"\"\"\n");
+    defer ed.deinit();
+    try ed.replaceStringAtPath(&.{.{ .key = "a" }}, "\"two\\nthree\\n\"", "two\nthree\n");
+    try expectTomlSource(&ed, "a = '''\ntwo\nthree\n'''\nb = \"\"\"x\"\"\"\n");
+    try ed.replaceStringAtPath(&.{.{ .key = "b" }}, "\"say \\\"hi\\\"\\n\"", "say \"hi\"\n");
+    try expectTomlSource(&ed, "a = '''\ntwo\nthree\n'''\nb = \"\"\"say \\\"hi\\\"\n\"\"\"\n");
+    // `'''` would close the literal, so it takes the basic string.
+    try ed.replaceStringAtPath(&.{.{ .key = "a" }}, "\"x'''y\"", "x'''y");
+    try expectTomlSource(&ed, "a = \"x'''y\"\nb = \"\"\"say \\\"hi\\\"\n\"\"\"\n");
+}

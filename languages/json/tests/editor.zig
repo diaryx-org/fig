@@ -478,3 +478,13 @@ test "json setAppend starts an absent list, and its missing parents" {
     try ed.setAppend(&.{ .{ .key = "p" }, .{ .key = "q" } }, "true");
     try std.testing.expectEqualStrings("{\"a\": 1, \"tags\": [\"x\", \"y\"], \"p\": {\"q\": [true]}}", ed.source.items);
 }
+
+// --- a replaced string keeps its quote style (`renderString`) ---
+
+test "json5 a string replacing a single-quoted one stays single-quoted" {
+    var ed = try newJson5Editor("{a: 'x', b: \"y\"}\n");
+    defer ed.deinit();
+    try ed.replaceStringAtPath(&.{.{ .key = "a" }}, "\"it's \\\"so\\\"\"", "it's \"so\"");
+    try ed.replaceStringAtPath(&.{.{ .key = "b" }}, "\"z\"", "z");
+    try expectJson5Source(&ed, "{a: 'it\\'s \"so\"', b: \"z\"}\n");
+}

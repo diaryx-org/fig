@@ -462,6 +462,12 @@ pub const EditOp = union(enum) {
     delete_key,
     /// Remove the item at this index from the sequence at `path` (text unused).
     remove_seq_item: usize,
+    /// `replace_value` and `set` for a value fig rendered that is a string:
+    /// the payload is the string, and `text` fig's spelling of it. A string
+    /// it replaces keeps its quote style (`Editor.replaceStringAtPath`).
+    /// `renderEdit` makes these; nothing asks for one directly.
+    replace_string: []const u8,
+    set_string: []const u8,
 };
 
 /// Sentinel sequence index meaning "the end" — produced by `parsePath` for the

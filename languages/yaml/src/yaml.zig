@@ -108,7 +108,7 @@ pub const Language = struct {
 
     // ── Editing ──────────────────────────────────────────────────────────────
     //
-    // No hooks and no renderers: YAML is the format the generic engine was
+    // No hooks, and one renderer: YAML is the format the generic engine was
     // written against. Its reference layer is core — the alias node kind,
     // `AST.resolveAlias` and `AST.mergedChild`, the anchor and tag span
     // tables on `Document` — so follow-mode replace and inherited-key
@@ -117,6 +117,23 @@ pub const Language = struct {
     // inline one is the engine's too: the parser records every entry's `:`
     // (`Document.sepSpan`) and the engine rewrites everything after
     // the key. `tests/editor.zig` holds this format's editor tests.
+
+    /// A string replacing a quoted one, in its quotes: `"…"` always, since it
+    /// escapes anything, and `'…'` when the new string has no control
+    /// character, which the printer would double-quote. Nothing for a plain
+    /// scalar, which is the printer's own choice, or a block scalar, which
+    /// the printer writes for a string with line breaks.
+    pub fn renderString(_: yaml.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+        if (r.old_value.len == 0) return;
+        var w = std.Io.Writer.Allocating.init(allocator);
+        defer w.deinit();
+        switch (r.old_value[0]) {
+            '"' => try yaml.Printer.writeDoubleQuoted(&w.writer, r.value),
+            '\'' => if (!yaml.Printer.hasControlChar(r.value)) try yaml.Printer.writeSingleQuoted(&w.writer, r.value),
+            else => {},
+        }
+        try out.appendSlice(allocator, w.written());
+    }
 };
 
 // The package's own tests (`zig build test`): every file's. Its editor

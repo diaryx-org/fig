@@ -635,6 +635,55 @@ pub fn Editor(comptime Language: type) type {
             try self.readsBack(&guard);
         }
 
+        /// `replaceValAtPath` for a string the caller rendered: `rendered`
+        /// is its spelling of the string `string`, the printer's. Where the
+        /// value replaced is a string too, the new one is written in the old
+        /// one's quote style, when that style can hold it — a YAML
+        /// `"debug"` replaced by `info` stays double-quoted — and as
+        /// `rendered` where it cannot. Text the caller spelled for itself (a
+        /// CLI `--raw` argument) goes to `replaceValAtPath`, which splices it
+        /// as written.
+        ///
+        /// **Renderer** `renderString(t, allocator, out, request)`, told the
+        /// string as `value` and the old one's spelling as `old_value`; it
+        /// writes nothing for a style that is the printer's own or cannot
+        /// hold the string. A format that declares none always splices
+        /// `rendered`.
+        pub fn replaceStringAtPath(self: *Self, path: []const AST.PathSegment, rendered: []const u8, string: []const u8) !void {
+            var buf: std.ArrayList(u8) = .empty;
+            defer buf.deinit(self.allocator);
+            return self.replaceValAtPath(path, try self.inOldStyle(&buf, path, rendered, string));
+        }
+
+        /// `set` for a string the caller rendered, as `replaceStringAtPath`
+        /// replaces one: a string that replaces a string keeps the old one's
+        /// quote style. A new entry has no old style, and takes `rendered`.
+        pub fn setString(self: *Self, path: []const AST.PathSegment, rendered: []const u8, string: []const u8) !void {
+            var buf: std.ArrayList(u8) = .empty;
+            defer buf.deinit(self.allocator);
+            return self.set(path, try self.inOldStyle(&buf, path, rendered, string));
+        }
+
+        /// `string` in the style of the string at `path`, appended to `buf`,
+        /// or `rendered` when there is no string there or the format's
+        /// `renderString` writes nothing for it.
+        fn inOldStyle(self: *Self, buf: *std.ArrayList(u8), path: []const AST.PathSegment, rendered: []const u8, string: []const u8) ![]const u8 {
+            if (!self.hasRenderer(.string)) return rendered;
+            const parsed = try self.getParsed();
+            const node = parsed.ast.getValByPath(path) catch return rendered;
+            if (node.kind != .string) return rendered;
+            const span = parsed.span(node);
+            const place = placeOfChild(parsed, node.id);
+            const from = buf.items.len;
+            try Language.renderString(self.format, self.allocator, buf, .{
+                .value = string,
+                .old_value = self.source.items[span.start..span.end],
+                .parent_key = place.key,
+                .parent_tag = place.tag,
+            });
+            return if (buf.items.len == from) rendered else buf.items[from..];
+        }
+
         fn spliceValue(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
             const parsed = try self.getParsed();
             const node = parsed.ast.getValByPath(path) catch |err| {

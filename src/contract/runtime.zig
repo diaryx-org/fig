@@ -605,7 +605,7 @@ pub fn validateVTable(vt: *const VTable) bool {
         return false;
     }
     if (!edit) {
-        if (vt.render_value != null or vt.render_entry != null or vt.render_item != null or vt.render_tail != null or vt.render_key != null or vt.render_key_name != null) {
+        if (vt.render_value != null or vt.render_entry != null or vt.render_item != null or vt.render_tail != null or vt.render_key != null or vt.render_key_name != null or vt.render_string != null) {
             refuse("'{s}' declares no edit capability but supplies an editing renderer", .{name});
             return false;
         }
@@ -1035,6 +1035,7 @@ pub const Language = struct {
             .tail => vt.render_tail != null,
             .key => vt.render_key != null,
             .key_name => vt.render_key_name != null,
+            .string => vt.render_string != null,
         };
     }
 
@@ -1055,6 +1056,9 @@ pub const Language = struct {
     }
     pub fn renderKeyName(t: Type, allocator: Allocator, out: *std.ArrayList(u8), r: manifest.RenderRequest) !void {
         return render(t, allocator, out, .key_name, r);
+    }
+    pub fn renderString(t: Type, allocator: Allocator, out: *std.ArrayList(u8), r: manifest.RenderRequest) !void {
+        return render(t, allocator, out, .string, r);
     }
 
     /// The entry's `split_stream`, or `UnsupportedOperation` for a language
@@ -1093,6 +1097,7 @@ pub const Language = struct {
             .tail => vt.render_tail,
             .key => vt.render_key,
             .key_name => vt.render_key_name,
+            .string => vt.render_string,
         } orelse return error.UnsupportedShape;
         const request: RenderRequest = .{
             .dialect = e.dialectZ(),
@@ -1103,6 +1108,7 @@ pub const Language = struct {
             .old_key = Str.of(r.old_key),
             .parent_key = Str.of(r.parent_key),
             .parent_tag = Str.of(r.parent_tag),
+            .old_value = Str.of(r.old_value),
         };
         var s: Str = .{};
         var err: ErrorInfo = .empty;

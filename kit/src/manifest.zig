@@ -708,7 +708,7 @@ pub const Syntax = struct {
     opener_line_comment: bool = false,
 };
 
-/// The five fragment renderers a format may declare — `Decls.renderers` in
+/// The fragment renderers a format may declare — `Decls.renderers` in
 /// `language.zig`, as an enum the engine can ask about. `Editor.hasRenderer`
 /// answers for a compiled language from `@hasDecl` and for a runtime one
 /// from the language's own `hasRenderer(t, which)`, since a vtable answers
@@ -720,6 +720,7 @@ pub const Renderer = enum {
     tail,
     key,
     key_name,
+    string,
 
     /// The declaration name: `renderValue` for `.value`.
     pub fn declName(comptime self: Renderer) []const u8 {
@@ -730,6 +731,7 @@ pub const Renderer = enum {
             .tail => "renderTail",
             .key => "renderKey",
             .key_name => "renderKeyName",
+            .string => "renderString",
         };
     }
 };
@@ -740,7 +742,9 @@ pub const Renderer = enum {
 /// `key` the key as written (entry, tail, key); `value` the value text,
 /// already through `renderValue` for every renderer but the value's own;
 /// `literal` what fig's bare-literal rules make of it (value); `old_key`
-/// the key being renamed, as the source spells it (key).
+/// the key being renamed, as the source spells it (key). For `string`,
+/// `value` is the new string itself, decoded, and `old_value` the string it
+/// replaces as the source spells it, quotes and all.
 ///
 /// `parent_key` and `parent_tag` say where the fragment goes: the
 /// CONTAINER it is written into — the mapping an entry joins, the sequence
@@ -759,6 +763,7 @@ pub const RenderRequest = struct {
     old_key: []const u8 = "",
     parent_key: []const u8 = "",
     parent_tag: []const u8 = "",
+    old_value: []const u8 = "",
 };
 
 /// What fig's bare-literal rules make of the text a value renderer is

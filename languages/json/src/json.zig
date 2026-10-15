@@ -96,6 +96,17 @@ pub const Language = struct {
         try out.appendSlice(allocator, w.written());
     }
 
+    /// A string replacing a JSON5 `'…'` string, in single quotes, which
+    /// hold anything: a `'` is escaped. Nothing for a `"…"` string, the
+    /// printer's own, nor in strict JSON or JSONC, which have no other.
+    pub fn renderString(t: json.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+        if (t != .JSON5 or !std.mem.startsWith(u8, r.old_value, "'")) return;
+        var w = std.Io.Writer.Allocating.init(allocator);
+        defer w.deinit();
+        try json_string.writeQuotedIn(&w.writer, r.value, '\'');
+        try out.appendSlice(allocator, w.written());
+    }
+
     /// The one manifest in tree whose answer genuinely varies by dialect, and
     /// therefore the reason `syntax` is a function of `Type` at all: strict
     /// JSON has no comment syntax, JSONC and JSON5 have `//` lines and

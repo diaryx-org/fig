@@ -370,6 +370,19 @@ FigStatus fig_editor_replace_named_key(FigEditor *editor, const FigPathSegment *
 // created, a missing parent container returns FIG_STATUS_NOT_FOUND.
 FigStatus fig_editor_set(FigEditor *editor, const FigPathSegment *path,
                          size_t path_len, const uint8_t *val, size_t val_len);
+// fig_editor_replace_val and fig_editor_set for a string the caller rendered:
+// `repl`/`val` is its spelling of the string `str`. Where the value replaced
+// is a string, the new one is written in the old one's quote style when that
+// style can hold it (a YAML "debug" replaced by info stays "info", a TOML
+// 'literal' stays literal), and as `repl`/`val` where it cannot. Text the
+// caller spelled for itself goes to fig_editor_replace_val, which splices it
+// as written.
+FigStatus fig_editor_replace_string(FigEditor *editor, const FigPathSegment *path,
+                                    size_t path_len, const uint8_t *repl, size_t repl_len,
+                                    const uint8_t *str, size_t str_len);
+FigStatus fig_editor_set_string(FigEditor *editor, const FigPathSegment *path,
+                                size_t path_len, const uint8_t *val, size_t val_len,
+                                const uint8_t *str, size_t str_len);
 // Comment editing. The marker (`#` for YAML, `//` for JSONC/JSON5) is supplied
 // by the editor; strict JSON has no comment syntax and returns
 // FIG_STATUS_UNSUPPORTED_FORMAT. `add_leading` inserts an own-line comment above
@@ -1163,7 +1176,11 @@ typedef struct FigDialectDesc {
 // of `value` trimmed — "null", "bool", "int", "float", "datetime" or
 // "string" — classified once by fig so that every format means the same
 // thing by `42` (a renderer spells the kind it is told); `old_key` the key
-// being renamed, as the source spells it (key).
+// being renamed, as the source spells it (key). For render_string, `value` is
+// the new string itself, decoded, and `old_value` the string it replaces as
+// the source spells it, quotes and all: the renderer writes the new one in
+// that style, or nothing when the style is the printer's own or cannot hold
+// it.
 //
 // `parent_key` and `parent_tag` are the CONTAINER the fragment is written
 // into — the mapping an entry joins, the sequence an item joins, the
@@ -1185,6 +1202,7 @@ typedef struct FigRenderRequest {
     FigStr      old_key;
     FigStr      parent_key;
     FigStr      parent_tag;
+    FigStr      old_value;
 } FigRenderRequest;
 
 typedef int (*FigRenderFn)(void *ctx, const FigRenderRequest *request, FigStr *out, FigError *err);
@@ -1211,7 +1229,7 @@ typedef int (*FigSplitStreamFn)(void *ctx, const char *dialect, FigStr input, Fi
 // nesting the format holds; `lossless` is FIG_LOSSLESS_ENVELOPE and FIG_NATIVE_*
 // bits, 0 for no envelope; `syntax` is required iff FIG_CAP_EDIT; `print` iff
 // FIG_CAP_SERIALIZE; `samples` is required and non-empty. The
-// six render_* slots are optional and NULL where the format declares none:
+// seven render_* slots are optional and NULL where the format declares none:
 // each spells one fragment for the editor from the FigRenderRequest it is
 // handed and returns the text through `out`, which fig frees with
 // free_bytes.
@@ -1242,6 +1260,8 @@ typedef struct FigLanguageVTable {
     FigRenderFn render_key_name;
     // NULL for a language without multi-document streams.
     FigSplitStreamFn split_stream;
+    // Appended after split_stream, as every new field is.
+    FigRenderFn render_string;
 } FigLanguageVTable;
 
 // The FIG_LANGUAGE_VTABLE_VERSION of the linked library.

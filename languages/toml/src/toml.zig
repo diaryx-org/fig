@@ -83,6 +83,29 @@ pub const Language = struct {
         try out.appendSlice(allocator, w.written());
     }
 
+    /// A string replacing a string, in the old one's style where that style
+    /// can hold it: a literal `'…'` with no `'`, line break or control
+    /// character; a `'''…'''` within the multi-line rules; a `"""…"""`
+    /// always. Nothing for a basic `"…"`, which is the printer's own.
+    /// A multi-line string keeps a line break after its opener.
+    pub fn renderString(_: toml.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+        const old = r.old_value;
+        var w = std.Io.Writer.Allocating.init(allocator);
+        defer w.deinit();
+        if (std.mem.startsWith(u8, old, "'''") or std.mem.startsWith(u8, old, "\"\"\"")) {
+            const after = old[3..];
+            const newline_first = std.mem.startsWith(u8, after, "\n") or std.mem.startsWith(u8, after, "\r\n");
+            if (old[0] == '"') {
+                try toml.Printer.writeMultilineBasicString(&w.writer, r.value, newline_first);
+            } else if (toml.Printer.literalHolds(r.value, true)) {
+                try toml.Printer.writeLiteralString(&w.writer, r.value, true, newline_first);
+            }
+        } else if (std.mem.startsWith(u8, old, "'") and toml.Printer.literalHolds(r.value, false)) {
+            try toml.Printer.writeLiteralString(&w.writer, r.value, false, false);
+        }
+        try out.appendSlice(allocator, w.written());
+    }
+
     /// 1.0 and 1.1 differ in what the PARSER accepts (newlines and trailing
     /// commas in inline tables, seconds-optional times, `\e`/`\xHH` escapes),
     /// not in what the editor writes, so both dialects answer identically.

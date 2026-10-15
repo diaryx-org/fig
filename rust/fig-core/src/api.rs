@@ -749,28 +749,40 @@ impl Document {
     /// `fig_document_serialize`: the whole document in `format`, through the
     /// pipeline the CLI's `get` prints from (`prepare_document_ast`).
     pub fn serialize(&mut self, format: i32, options: Option<&FigSerializeOptions>) -> Result<&[u8], Status> {
+        self.rendered = self.serialize_to_vec(format, options)?;
+        Ok(&self.rendered)
+    }
+
+    /// `serialize`, the text handed back rather than kept on the document:
+    /// what the C call writes to its out-parameter, for a caller holding
+    /// the document shared.
+    pub fn serialize_to_vec(&self, format: i32, options: Option<&FigSerializeOptions>) -> Result<Vec<u8>, Status> {
         let Some(target) = target_of(format) else { return Err(Status::UnsupportedFormat) };
         let opts = serialize_options_of(options);
         let prepared = prepare_document_ast(&self.document.ast, &self.entry, &target, options).map_err(convert_status)?;
         let ast = prepared.as_ref().unwrap_or(&self.document.ast);
         let mut out = Vec::new();
         registry::print_with(&target, ast, &opts, &mut out).map_err(runtime_print_status)?;
-        self.rendered = out;
-        Ok(&self.rendered)
+        Ok(out)
     }
 
     /// `fig_document_diagnose`: how many lossy events serializing the
     /// document to `format` would produce, over the same pipeline
     /// `serialize` prints from. The set is kept for `warning`.
     pub fn diagnose(&mut self, format: i32, options: Option<&FigSerializeOptions>) -> Result<usize, Status> {
-        let Some(target) = target_of(format) else { return Err(Status::UnsupportedFormat) };
         // A failed analyze must not leave a stale set indexable.
         self.diag_warnings.clear();
+        self.diag_warnings = self.diagnose_to_vec(format, options)?;
+        Ok(self.diag_warnings.len())
+    }
+
+    /// `diagnose`, the warnings handed back rather than kept for `warning`:
+    /// every one the C caller would read with `fig_document_warning`.
+    pub fn diagnose_to_vec(&self, format: i32, options: Option<&FigSerializeOptions>) -> Result<Vec<Warning>, Status> {
+        let Some(target) = target_of(format) else { return Err(Status::UnsupportedFormat) };
         let prepared = prepare_document_ast(&self.document.ast, &self.entry, &target, options).map_err(convert_status)?;
         let ast = prepared.as_ref().unwrap_or(&self.document.ast);
-        let warnings = diagnostics::analyze(ast, ast.root, &Target::Language(target), &diagnose_options_of(options));
-        self.diag_warnings = warnings;
-        Ok(self.diag_warnings.len())
+        Ok(diagnostics::analyze(ast, ast.root, &Target::Language(target), &diagnose_options_of(options)))
     }
 
     /// `fig_document_warning`: the warning at `index` from the most recent

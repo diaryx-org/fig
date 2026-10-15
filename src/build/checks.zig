@@ -70,9 +70,8 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // The canonical ABI version so the tool can assert fig.h's FIG_ABI_VERSION
     // macro matches the value compiled into `fig_abi_version()`.
     abi_check_run.addArg(b.fmt("{d}", .{ver.abi}));
-    // The three binding-side mirrors of `FigFormat`, diffed against the
-    // registry the same way fig.h is.
-    abi_check_run.addFileArg(b.path("bindings/rust/fig-sys/src/lib.rs"));
+    // The two binding-side surfaces that once mirrored `FigFormat`, held to
+    // stating no fixed format number, as fig.h is.
     abi_check_run.addFileArg(b.path("bindings/typescript/src/types.ts"));
     abi_check_run.addFileArg(b.path("bindings/rust/fig/src/lib.rs"));
     // The Rust wrapper's `ExtKind`, diffed against the core's with fig.h's
@@ -176,18 +175,16 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // useful `check`; the step warns and skips rather than failing. CI installs
     // cargo, so there the suite runs for real.
     //
-    // Built from THIS tree's core, never the prebuilt payload archive: with the
-    // default feature set `fig-sys` would otherwise link whatever `libfig.a`
-    // a `build-payload-lib.sh` run last left under `fig-sys-<target>/lib`,
-    // and a `check` that tests the binding against a stale core is not a
-    // check. Zig is on PATH here by construction.
+    // The workspace is pure Rust (fig-kit, fig-core, the language crates, the
+    // binding, the CLI, the C ABI and the conformance adapter): it needs no
+    // Zig, and tests this tree's Rust.
     const rust_test_script =
         \\set -eu
         \\if ! command -v cargo >/dev/null 2>&1; then
         \\  echo "rust tests: cargo not found — skipping (install Rust to run them)."
         \\  exit 0
         \\fi
-        \\FIG_SYS_FORCE_SOURCE=1 cargo test --workspace
+        \\cargo test --workspace
     ;
     const rust_test = b.addSystemCommand(&.{ "sh", "-c", rust_test_script });
     rust_test.setCwd(b.path("bindings/rust"));

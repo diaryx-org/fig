@@ -3,8 +3,9 @@ name: CI
 #
 # * zig         — the core: zig build check (test + all-on + abi-check +
 # semver-check + version-check). The one pre-release gate.
-# * rust        — cargo test for the Rust binding (bindings/rust).
-# * payload     — each payload crate links fig without Zig, per target.
+# * rust        — cargo test for fig's Rust workspace (bindings/rust).
+# * cross       — the `fig` crate builds for each tier-1 target, without Zig.
+# * rust-port   — the Rust core, CLI, C ABI and adapter, and the edit fixtures.
 # * typescript  — build + test the TypeScript/npm binding (bindings/typescript).
 # * wasi        — build + test the fig-wasi npm package (bindings/wasi).
 #
@@ -50,10 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
-    # build.rs compiles the fig core with `zig build`, so Zig is required here
-    # even though this is a Rust job.
-    - uses: mlugg/setup-zig@v2
-      with: { version: 0.17.0 }
+    # The workspace is pure Rust: no Zig here, by design
+    # (docs/proposals/rust-core.md).
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
       with: { workspaces: bindings/rust }
@@ -62,23 +61,13 @@ jobs:
     # set, so a plain `cargo test` would silently skip them.
     - run: cargo test --workspace --all-features
       working-directory: bindings/rust
-  # A payload crate (bindings/rust/fig-sys-<key>) carries the prebuilt core and
-  # every language's library for one target, so a Rust program there needs no
-  # Zig. The `rust` job above builds from source in the checkout and never links
-  # a payload, and the release only builds them, on one macOS runner, just
-  # before publishing: so nothing showed that a payload's archives link on the
-  # target they are for. A broken one (the wasm core stopped building for a
-  # month in 2026, unnoticed) would surface as a failed release or a user's
-  # link error. This runs scripts/check-payload.sh for each target the host can
-  # link: it builds the payload, shadows Zig with a `zig` that fails, links
-  # fig's `wasm_smoke` example (fig and every language crate) from the payload
-  # alone, and runs it where the runner can. Android is linked with the NDK
-  # the runner image carries and not run: its programs need Android's loader.
-  #
-  # Here and not only in the release, because a release is the worst place for
-  # a check's first run (see the wasi job below).
-  payload:
-    name: Rust — payload ${{ matrix.key }} links without Zig
+  # The `fig` crate, its core (`fig-core`, `fig-kit`) and its language crates
+  # are pure Rust, so a program on any target builds them with no Zig and no C
+  # toolchain. The `rust` job above builds for the host; this builds the `fig`
+  # crate for each tier-1 target fig once shipped a prebuilt payload for, so a
+  # target the crate stopped compiling for shows here, not in a user's build.
+  cross:
+    name: Rust — fig builds for ${{ matrix.key }} (no Zig)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -87,73 +76,52 @@ jobs:
         - key: macos-x64
           os: macos-latest
           target: x86_64-apple-darwin
-          # The arm64 runner runs an x86_64 program under Rosetta.
-          run: arch -x86_64
         - key: linux-x64-musl
           os: ubuntu-latest
           target: x86_64-unknown-linux-musl
-          run: ''
         - key: linux-arm64-musl
           os: ubuntu-24.04-arm
           target: aarch64-unknown-linux-musl
-          run: ''
         - key: android-arm64
           os: ubuntu-latest
           target: aarch64-linux-android
-          run: '-'
         - key: android-x64
           os: ubuntu-latest
           target: x86_64-linux-android
-          run: '-'
-        # Linked, not run: the core and the languages each compile for iOS apart
-        # from macOS, and a release found the languages' did not.
         - key: ios-arm64
           os: macos-latest
           target: aarch64-apple-ios
-          run: '-'
         - key: wasm32-wasi
           os: ubuntu-latest
           target: wasm32-wasip1
-          run: wasmtime run
     steps:
     - uses: actions/checkout@v7
-    # Builds the payload's archives; the link after it must not call Zig.
-    - uses: mlugg/setup-zig@v2
-      with: { version: 0.17.0 }
     - uses: dtolnay/rust-toolchain@stable
       with: { targets: '${{ matrix.target }}' }
     - uses: Swatinem/rust-cache@v2
       with: { workspaces: bindings/rust, key: '${{ matrix.key }}' }
-    - if: matrix.key == 'wasm32-wasi'
-      uses: bytecodealliance/actions/wasmtime/setup@v1
-    # Cargo links Android with the host's `cc` unless told otherwise; the
-    # runner image carries an NDK, whose clang names the API level.
-    - name: Link Android with the NDK
-      if: startsWith(matrix.key, 'android')
-      run: |-
-        set -euo pipefail
-        target="${{ matrix.target }}"
-        var="CARGO_TARGET_$(printf '%s' "$target" | tr '[:lower:]-' '[:upper:]_')_LINKER"
-        echo "$var=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${target}24-clang" >> "$GITHUB_ENV"
-    - run: bash scripts/check-payload.sh ${{ matrix.key }} "${{ matrix.run }}"
+    - run: cargo build -p fig --target ${{ matrix.target }}
       working-directory: bindings/rust
   rust-port:
     name: Rust port — cargo test + edit fixtures (no Zig)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
-    # The port in rust/ is pure Rust: no Zig here, by design
-    # (docs/proposals/rust-core.md).
+    # The port's crates (rust/) are members of bindings/rust's workspace, and
+    # pure Rust: no Zig here, by design (docs/proposals/rust-core.md).
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
-      with: { workspaces: rust }
-    - run: cargo test --workspace
-      working-directory: rust
+      with: { workspaces: bindings/rust }
+    # The kit, the core, the CLI, the C ABI and the conformance adapter with
+    # their default features, as a program takes them (the `rust` job runs the
+    # whole workspace with every feature on).
+    - run: cargo test -p fig-kit -p fig-core -p fig-cli -p fig-capi -p fig-conform
+      working-directory: bindings/rust
     - run: cargo build --release -p fig-conform
-      working-directory: rust
+      working-directory: bindings/rust
     # Every language's hand-written edit fixtures, through the Rust editor
     # behind fig-conformance's adapter protocol.
-    - run: node tools/edit-fixtures.mjs --command rust/target/release/fig-conform
+    - run: node tools/edit-fixtures.mjs --command bindings/rust/target/release/fig-conform
   typescript:
     name: TypeScript — build + test
     runs-on: ubuntu-latest

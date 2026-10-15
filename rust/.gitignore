@@ -1,1 +1,5 @@
+# Left by builds from before these crates joined bindings/rust's workspace,
+# whose target/ they build into now.
 target/
+# Vendored in by `zig build vendor-rust` before publishing.
+fig-*/LICENSE-*

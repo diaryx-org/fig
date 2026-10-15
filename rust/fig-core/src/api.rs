@@ -1821,6 +1821,19 @@ mod tests {
         assert_eq!("{\"a\": 1, \"k\\\"q\": 2}", source(&ed));
     }
 
+    /// A block mapping whose first key is a flow collection sniffs as flow,
+    /// and its last member ends past its span's last byte: the Zig's wasm
+    /// reads that as a multi-line flow mapping, writes the entry on a line
+    /// of its own, and refuses what reads back (`EditReadsBackWrong`), as
+    /// fig-conformance's `explicit-keys.yaml` root inserts record.
+    #[test]
+    fn an_insert_under_an_explicit_flow_key_reads_back_wrong() {
+        let src = "? [a, b]\n: c\n? a: b\n: d\n: empty key\n";
+        let mut ed = editor(src, "yaml");
+        assert_eq!(Status::UnsupportedOperation, ed.insert_named_key(&[], b"added_int", b"42").unwrap_err());
+        assert_eq!(src, source(&ed));
+    }
+
     #[test]
     fn replace_named_key_spells_the_new_name_as_the_format_does() {
         let mut ed = editor(".{ .a = 1, .b = 2 }", "zon");

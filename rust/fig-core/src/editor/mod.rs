@@ -5287,7 +5287,19 @@ impl<'l> Editor<'l> {
             return Ok(find_byte(source.get(from..last_end).unwrap_or(b""), b'\n').is_some());
         }
         let close = span.end.saturating_sub(1); // the '}' or ']'
-        Ok(find_byte(source.get(last_end..close).unwrap_or(b""), b'\n').is_some())
+        // A block mapping the first-byte sniff reads as flow — its first
+        // key a flow collection (YAML's `? [a, b]`) — has its last member
+        // end at or past the span's last byte, so `last_end > close`. The
+        // Zig slices `source[last_end..close]` regardless; in the builds it
+        // ships (ReleaseSmall, the wasm the bindings load) that reversed
+        // slice is not checked and the scan runs on past the source until it
+        // meets a newline, so the mapping reads as multi-line: the entry is
+        // written on a line of its own, and `reads_back` then refuses it
+        // with `EditReadsBackWrong`.
+        match source.get(last_end..close) {
+            Some(between) => Ok(find_byte(between, b'\n').is_some()),
+            None => Ok(true),
+        }
     }
 
     /// Insert a `key: value` entry into a brace-delimited (flow) mapping,

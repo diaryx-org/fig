@@ -4,8 +4,12 @@
 # the workspace dependencies in Cargo.toml, and the publish list in
 # .github/workflows/release.yml.
 # Adding a target = one row here + rerun gen-payloads.sh + add the cfg dep,
-# build.rs arm, workspace dependency and publish entry. Targets NOT listed here
-# fall back to the vendored zig source build.
+# build.rs arm and workspace dependency (the release publishes one crate per
+# row). Targets NOT listed here fall back to the vendored zig source build.
+#
+# scripts/check-payload.sh <key> proves a payload links fig without Zig, and
+# runs it where the host can; CI's `payload` job (figl/ci.figl) runs it for
+# the targets a GitHub runner can link, so a new one wants a row there too.
 #
 # Each payload carries the core (`libfig.a`, which has no language) and the
 # library of every language fig ships (`libfig_<name>.a`), so neither fig-sys

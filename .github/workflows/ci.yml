@@ -5,6 +5,7 @@ name: CI
 # semver-check + version-check). The one pre-release gate.
 # * rust        — cargo test for the Rust binding (bindings/rust).
 # * rust-semver — cargo-semver-checks over the native Rust public surface.
+# * payload     — each payload crate links fig without Zig, per target.
 # * typescript  — build + test the TypeScript/npm binding (bindings/typescript).
 # * wasi        — build + test the fig-wasi npm package (bindings/wasi).
 #
@@ -61,6 +62,75 @@ jobs:
     # (deserialize/serialize/edit/derive) run — none are in the default feature
     # set, so a plain `cargo test` would silently skip them.
     - run: cargo test --workspace --all-features
+      working-directory: bindings/rust
+  # A payload crate (bindings/rust/fig-sys-<key>) carries the prebuilt core and
+  # every language's library for one target, so a Rust program there needs no
+  # Zig. The `rust` job above builds from source in the checkout and never links
+  # a payload, and the release only builds them, on one macOS runner, just
+  # before publishing: so nothing showed that a payload's archives link on the
+  # target they are for. A broken one (the wasm core stopped building for a
+  # month in 2026, unnoticed) would surface as a failed release or a user's
+  # link error. This runs scripts/check-payload.sh for each target the host can
+  # link: it builds the payload, shadows Zig with a `zig` that fails, links
+  # fig's `wasm_smoke` example (fig and every language crate) from the payload
+  # alone, and runs it where the runner can. Android is linked with the NDK
+  # the runner image carries and not run: its programs need Android's loader.
+  #
+  # Here and not only in the release, because a release is the worst place for
+  # a check's first run (see the wasi job below).
+  payload:
+    name: Rust — payload ${{ matrix.key }} links without Zig
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - key: macos-x64
+          os: macos-latest
+          target: x86_64-apple-darwin
+          # The arm64 runner runs an x86_64 program under Rosetta.
+          run: arch -x86_64
+        - key: linux-x64-musl
+          os: ubuntu-latest
+          target: x86_64-unknown-linux-musl
+          run: ''
+        - key: linux-arm64-musl
+          os: ubuntu-24.04-arm
+          target: aarch64-unknown-linux-musl
+          run: ''
+        - key: android-arm64
+          os: ubuntu-latest
+          target: aarch64-linux-android
+          run: '-'
+        - key: android-x64
+          os: ubuntu-latest
+          target: x86_64-linux-android
+          run: '-'
+        - key: wasm32-wasi
+          os: ubuntu-latest
+          target: wasm32-wasip1
+          run: wasmtime run
+    steps:
+    - uses: actions/checkout@v7
+    # Builds the payload's archives; the link after it must not call Zig.
+    - uses: mlugg/setup-zig@v2
+      with: { version: 0.17.0 }
+    - uses: dtolnay/rust-toolchain@stable
+      with: { targets: '${{ matrix.target }}' }
+    - uses: Swatinem/rust-cache@v2
+      with: { workspaces: bindings/rust, key: '${{ matrix.key }}' }
+    - if: matrix.key == 'wasm32-wasi'
+      uses: bytecodealliance/actions/wasmtime/setup@v1
+    # Cargo links Android with the host's `cc` unless told otherwise; the
+    # runner image carries an NDK, whose clang names the API level.
+    - name: Link Android with the NDK
+      if: startsWith(matrix.key, 'android')
+      run: |-
+        set -euo pipefail
+        target="${{ matrix.target }}"
+        var="CARGO_TARGET_$(printf '%s' "$target" | tr '[:lower:]-' '[:upper:]_')_LINKER"
+        echo "$var=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${target}24-clang" >> "$GITHUB_ENV"
+    - run: bash scripts/check-payload.sh ${{ matrix.key }} "${{ matrix.run }}"
       working-directory: bindings/rust
   # cargo-semver-checks guards the *native Rust* public surface (Value, Document,
   # the editor, the #[derive] macros, serde impls, cargo features) — the contract

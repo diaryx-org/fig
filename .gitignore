@@ -19,3 +19,4 @@ languages/*/LICENSE-*
 # A language package's JavaScript module, wrapped from its WebAssembly by
 # its js/build.mjs.
 languages/*/js/*.js
+.env

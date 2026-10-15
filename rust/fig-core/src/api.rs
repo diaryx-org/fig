@@ -1342,6 +1342,13 @@ fn runtime_language(entry: &Arc<Entry>) -> &'static RuntimeLanguage {
 }
 
 impl RuntimeLanguage {
+    /// The language as the editor sees it through `entry`, whether or not
+    /// the entry is published yet (the registration harness's editor runs
+    /// over rows it has not).
+    pub(crate) fn new(entry: Arc<Entry>) -> RuntimeLanguage {
+        RuntimeLanguage { entry }
+    }
+
     fn lang(&self) -> &'static dyn Language {
         self.entry.lang()
     }

@@ -94,8 +94,10 @@
 //!   without the serialize capability is `FormatDisabled`. Nothing is written
 //!   to `out` on failure.
 //! - **The harness** (on unless `RegisterOptions::harness` is false) parses
-//!   every sample in every row, checks its regions, and where the language
-//!   prints, prints and reparses it to the same tree. `register_bundle`
+//!   every sample in every row, checks its regions, where the language
+//!   prints, prints and reparses it to the same tree, and where it edits,
+//!   constructs an `Editor` over it and checks that a no-op splice is the
+//!   identity. `register_bundle`
 //!   runs it only in this crate's own test build, as Zig's bundle does in a
 //!   test build, and stops at the first language refused.
 
@@ -110,6 +112,7 @@ use crate::kit::language::{self as language, Language, ParseDiagnostic};
 use crate::kit::manifest::{
     Caps, Comments, Dialect, Prints, RenderRequest, Renderer, SpliceStyle, StreamDocument, Syntax,
 };
+use crate::kit::span::Span;
 use crate::kit::table::{self, Table};
 use crate::Result;
 
@@ -671,10 +674,10 @@ fn validate_syntax(name: &str, s: &Syntax, has: &dyn Fn(Renderer) -> bool) -> co
 
 /// `harness.zig`'s checks over one registration: every sample parses;
 /// prints and reparses to the same tree where the language prints; its
-/// regions are well-formed. (Zig's harness also constructs an `Editor` over
-/// each sample of an editable language and checks that a no-op splice is the
-/// identity; the editor is not part of this module's port, so that check is
-/// the editor's to add when it lands.)
+/// regions are well-formed; and, where it edits, an `Editor` constructs
+/// over it and a no-op splice is the identity. The editor reads the rows as
+/// a caller's will (`api::RuntimeLanguage`), though they are not published
+/// yet.
 fn check_registration(reg: &Registered, entries: &[Arc<Entry>]) -> Result<()> {
     for e in entries {
         for &sample in &reg.samples {
@@ -717,6 +720,22 @@ fn check_registration(reg: &Registered, entries: &[Arc<Entry>]) -> Result<()> {
                 // tree reparsed is the same rows in the same order.
                 if !first.ast.eql(&second.ast) || !first.ast.comments_eql(&second.ast) {
                     refuse(&format!("'{}': print then reparse changed a sample's tree", e.name));
+                    return Err(err!(HarnessFailed));
+                }
+            }
+            if reg.caps.edit {
+                let lang = crate::api::RuntimeLanguage::new(e.clone());
+                let mut ed = crate::editor::Editor::new(&lang, e.dialect);
+                if let Err(err) = ed.init(sample) {
+                    refuse(&format!("'{}': Editor does not construct over a sample ({})", e.name, err.name()));
+                    return Err(err!(HarnessFailed));
+                }
+                if let Err(err) = ed.replace_at_span(Span::new(0, 0), b"") {
+                    refuse(&format!("'{}': a no-op splice fails ({})", e.name, err.name()));
+                    return Err(err!(HarnessFailed));
+                }
+                if sample != ed.source() {
+                    refuse(&format!("'{}': a no-op splice changed the source", e.name));
                     return Err(err!(HarnessFailed));
                 }
             }

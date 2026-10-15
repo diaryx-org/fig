@@ -4,7 +4,7 @@ part_of = [Proposals](/docs/proposals/proposals.md)
 description = Every language fig supports authoring in gets the same kit — node table, row writer, tree, scanner, grammar, printer, rules — with one implementation of each rule and each binding's layers held to the same answers
 author = adammharris
 created = 2026-10-14
-status = accepted
+status = implemented
 updated = 2026-10-14
 ```
 
@@ -18,6 +18,26 @@ fig-lua's and fig-quickjs's twins left to their own repositories. XML
 comes to Rust and C through `fig_kit_xml_tokenize`. The names below were
 fixed first, before the 6.0.0 tag; the rest is additive, for 6.1. The
 choices marked **Decision** are kept as they were argued.
+
+Implemented in fig, 2026-10-14, every layer in every binding but fig-lua's
+and fig-quickjs's, which are their repositories' to take up. Where the
+work departed from the plan:
+
+- C also gained `fig_table_row(t, id)`: without a way to reach a row
+  already written, a C parser cannot link it to one written later, which
+  is what `fig_table_finish` is for.
+- `RowWriter.finish` was fixed on the way: it left a moved table's side
+  facts in the order they were written rather than node order, left each
+  moved row's links naming old rows, and could loop on a cycle in links a
+  caller wrote.
+- Grammar semantics are held by the dotenv twins rather than by a
+  `kit/testdata/grammar/` of their own; the twins exercise every rule
+  dotenv uses, in four bindings, against one compiled format.
+- The dotenv fixtures stayed where the JavaScript twins have them
+  (`bindings/typescript/test/fixtures/dotenv/`), and the Zig, C and Rust
+  twins read them there, rather than moving them to `languages/dotenv/`.
+- The JavaScript XML kit stays grammar-shaped and is held by the plist
+  twin; the token fixtures (`kit/testdata/xml/`) hold Zig, C and Rust.
 
 ## Names
 

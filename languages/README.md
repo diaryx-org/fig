@@ -158,3 +158,27 @@ contract at runtime; see [fig in TypeScript](../docs/typescript.md) and
 datetime rules reach it too, so it spells a number and reads a datetime
 as these languages do: `fig_kit_*` in `fig.h`, `fig::kit` in Rust, and
 `@diaryx/fig/kit/number` and `/datetime` in JavaScript.
+
+## Writing a language in another binding
+
+The languages here are written in Zig and bound for C, Rust and
+JavaScript. A language can as well be written in any of them, with the
+same kit: the rules (`number`, `datetime`, `literal`, `json_string`,
+`xml`), a row writer that takes rows in any order and finishes them into
+pre-order, and, where the binding's idiom has room for one, a tree, a
+scanner, grammar combinators and a printer's writer. `kit/testdata/` in
+the repository holds every binding's kit to the same answers, and each
+binding has dotenv written with its kit, held to the dotenv here table for
+table:
+
+| Binding    | The kit                                  | dotenv written with it                    | Held to `dotenv` by |
+| ---------- | ---------------------------------------- | ----------------------------------------- | ------------------- |
+| Zig        | `kit` (`kit/src/kit.zig`)                | `kit/examples/dotenv.zig`                 | `src/kit_twins_test.zig` |
+| C          | `fig_kit_*`, `fig_table_*` (`fig.h`)     | `bindings/c/examples/dotenv.c`            | `src/kit_twins_test.zig` |
+| Rust       | `fig::kit`                               | `bindings/rust/fig/examples/kit_dotenv_helper` | `tests/kit_dotenv.rs`, and `fig lang check` in `tools/cli-lang-check.sh` |
+| JavaScript | `@diaryx/fig/kit`                        | `bindings/typescript/js/dotenv.js`        | `test/twins.test.ts` |
+
+A language written outside Zig is registered at run time
+(`fig_language_register`, `fig::language::register`, `registerLanguage`)
+or served to the `fig` command line as a helper; `fig lang check <name>
+--against <format>` holds it to a compiled sibling.

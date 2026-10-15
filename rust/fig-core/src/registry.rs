@@ -518,9 +518,12 @@ fn bundled_languages() -> Vec<&'static dyn Language> {
         &lang::json::LANGUAGE,
         &lang::yaml::LANGUAGE,
         &lang::toml::LANGUAGE,
+        &lang::zon::LANGUAGE,
         &lang::ini::LANGUAGE,
         &lang::dotenv::LANGUAGE,
         &lang::properties::LANGUAGE,
+        &lang::plist::LANGUAGE,
+        &lang::nestedtext::LANGUAGE,
     ]
 }
 

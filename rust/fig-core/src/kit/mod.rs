@@ -26,3 +26,32 @@ pub mod number;
 pub mod yaml_schema;
 pub mod describe_json;
 pub mod ast;
+
+/// `kit.zig`'s `eql`: slices of equal length with equal elements, by the
+/// element type's own equality (Zig's dispatches to an `eql` method).
+pub fn eql<T: PartialEq>(a: &[T], b: &[T]) -> bool {
+    a == b
+}
+
+/// True when byte slice `s` exactly equals one of `options`. The shared
+/// form of the keyword-set matching the format parsers do (null/bool
+/// spellings, the `inf`/`nan` floats, etc.).
+pub fn eql_any(s: &[u8], options: &[&[u8]]) -> bool {
+    options.iter().any(|o| *o == s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn util_eql() {
+        assert!(eql(b"hello, world!", b"hello, world!"));
+    }
+
+    #[test]
+    fn util_eql_any() {
+        assert!(eql_any(b"yes", &[b"y", b"yes", b"true"]));
+        assert!(!eql_any(b"maybe", &[b"y", b"yes", b"true"]));
+    }
+}

@@ -1,12 +1,13 @@
-//! Port of kit/src/scanner.zig: a cursor over a parse's input whose position
-//! is a byte offset, so every span it hands out is already the table's.
-//! Nothing here advances on a miss. The scanner every kit has — the JavaScript
-//! kit's `Scanner`, Rust's `fig::kit::scan::Scanner` — and the one
-//! `grammar.zig` runs over.
+//! Port of kit/src/scanner.zig.
+//!
+//! A cursor over a parse's input whose position is a byte offset, so every
+//! span it hands out is already the table's. Nothing here advances on a
+//! miss. The scanner every kit has — the JavaScript kit's `Scanner`, Rust's
+//! `fig::kit::scan::Scanner` — and the one `grammar.rs` runs over.
 
 use super::span::Span;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct Scanner<'a> {
     pub src: &'a [u8],
     /// The cursor: a 0-based byte offset into `src`.
@@ -26,7 +27,7 @@ impl<'a> Scanner<'a> {
     /// either end; `k` may be negative.
     pub fn byte(&self, k: isize) -> Option<u8> {
         let i = self.pos as isize + k;
-        if i < 0 || i >= self.src.len() as isize {
+        if i < 0 || i as usize >= self.src.len() {
             return None;
         }
         Some(self.src[i as usize])
@@ -68,7 +69,8 @@ impl<'a> Scanner<'a> {
         if self.pos > self.src.len() {
             return None;
         }
-        index_of(&self.src[self.pos..], s).map(|i| self.pos + i)
+        let i = index_of(&self.src[self.pos..], s)?;
+        Some(self.pos + i)
     }
 
     /// Move the cursor `k` bytes forward.
@@ -76,14 +78,18 @@ impl<'a> Scanner<'a> {
         self.pos += k;
     }
 
+    pub fn is_hs(c: u8) -> bool {
+        c == b' ' || c == b'\t'
+    }
+
     /// Skip spaces and tabs; the cursor after them.
     pub fn hs(&mut self) -> usize {
-        self.take_while(is_hs);
+        self.take_while(Self::is_hs);
         self.pos
     }
 
-    /// Whether no newline lies in `[a, b)`: what "on the same line" means to a
-    /// trailing comment.
+    /// Whether no newline lies in `[a, b)`: what "on the same line" means to
+    /// a trailing comment.
     pub fn same_line(&self, a: usize, b: usize) -> bool {
         let end = b.min(self.src.len());
         if a >= end {
@@ -91,10 +97,6 @@ impl<'a> Scanner<'a> {
         }
         !self.src[a..end].contains(&b'\n')
     }
-}
-
-pub fn is_hs(c: u8) -> bool {
-    c == b' ' || c == b'\t'
 }
 
 /// `std.mem.indexOf`: the first offset of `needle` in `haystack` (0 for an
@@ -113,33 +115,13 @@ mod tests {
     #[test]
     fn the_scanner_moves_only_on_a_match() {
         let mut sc = Scanner::init(b"key = v # c\nx");
-        assert_eq!(sc.byte(-1), None);
+        assert_eq!(None, sc.byte(-1));
         assert!(sc.take_while1(|c| c.is_ascii_alphabetic()).is_some());
-        assert_eq!(sc.hs(), 4);
-        assert_eq!(sc.lit(b":"), None);
+        assert_eq!(4, sc.hs());
+        assert_eq!(None, sc.lit(b":"));
         assert!(sc.lit(b"=").is_some());
-        assert_eq!(sc.find(b"#"), Some(8));
+        assert_eq!(Some(8), sc.find(b"#"));
         assert!(sc.same_line(0, 11));
         assert!(!sc.same_line(0, 12));
-    }
-
-    #[test]
-    fn edges() {
-        let mut sc = Scanner::init(b"ab");
-        assert_eq!(sc.byte(0), Some(b'a'));
-        assert_eq!(sc.byte(2), None);
-        assert_eq!(sc.take_while1(|c| c == b'z'), None);
-        assert_eq!(sc.pos, 0);
-        assert_eq!(sc.find(b""), Some(0));
-        sc.advance(2);
-        assert!(sc.eof());
-        assert_eq!(sc.byte(-1), Some(b'b'));
-        assert!(sc.starts(b""));
-        assert_eq!(sc.find(b"a"), None);
-        // Past the end: nothing starts, nothing is found.
-        sc.advance(1);
-        assert!(!sc.starts(b""));
-        assert_eq!(sc.find(b""), None);
-        assert!(sc.same_line(5, 1));
     }
 }

@@ -4,14 +4,36 @@ part_of = [Proposals](/docs/proposals/proposals.md)
 description = Every language fig supports authoring in gets the same kit — node table, row writer, tree, scanner, grammar, printer, rules — with one implementation of each rule and each binding's layers held to the same answers
 author = adammharris
 created = 2026-10-14
-status = proposed
+status = accepted
+updated = 2026-10-14
 ```
 
 # Kit parity
 
-**Status.** Proposed, 2026-10-14. Nothing here is implemented. The choices
-marked **Decision** are Adam's. Each one gives a recommendation and the
-alternative.
+**Status.** Accepted, 2026-10-14: Adam took the recommendation on all four
+decisions. Grammar combinators come to Rust and Zig. C gets the rules,
+`fig_table_finish` and `fig_table_finish_in_order` (and
+`fig_table_child_by_key`). `Table.finish` comes to the JavaScript kit, with
+fig-lua's and fig-quickjs's twins left to their own repositories. XML
+comes to Rust and C through `fig_kit_xml_tokenize`. The names below were
+fixed first, before the 6.0.0 tag; the rest is additive, for 6.1. The
+choices marked **Decision** are kept as they were argued.
+
+## Names
+
+| Layer | Zig `kit` | JS `@diaryx/fig/kit` | Rust `fig::kit` | C `fig.h` |
+|---|---|---|---|---|
+| 1 Rules | `number`, `datetime`, `literal`, `json_string` | `/number`, `/datetime`, `/literal`, `/json-string` | `number`, `datetime`, `literal`, `json_string` | `fig_kit_number_*`, `fig_kit_datetime_*`, `fig_kit_literal_*`, `fig_kit_json_string_*` |
+| 2 Row writer | `RowWriter`, `ChildIndex`, `flat_map` | `Table`: `append`, `first`, `next`, `put`, `childByKey`, `finish` | `rows::RowWriter` | `fig_table_finish`, `fig_table_finish_in_order`, `fig_table_child_by_key` |
+| 3 Tree | `AST` (unchanged) | `mapping`, `sequence`, `entry`, `scalar`, `rows` | `tree` | — |
+| 4 Scanner | `Scanner` | `Scanner`, `Cursor` | `scan::Scanner` | — |
+| 5 Grammar | `grammar` | `/grammar` | `grammar` | — |
+| 6 Printer | `Writer` | `index`, `Writer` | `print::{Index, Writer}` | — |
+| 7 XML | `xml` | `/xml` | `xml` | `fig_kit_xml_tokenize` |
+
+The duplicate policies are named as the JavaScript kit names them,
+`last_value`, `first_value`, `keep` and `error`, everywhere but Zig's
+`flat_map`, which keeps its `overwrite` and `err` for the first and last.
 
 ## The problem
 

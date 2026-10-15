@@ -11,25 +11,12 @@ const Span = @import("kit").Span;
 const Editor = @import("editor.zig").Editor;
 const build_options = @import("build_options");
 
-/// Whether `std.Io.Threaded` fails to compile for this target. On iOS and its
-/// siblings Zig 0.17.0's `Threaded` reaches its process spawning, which reads a
-/// `NullFile.fd` those targets do not have, so anything that touches
-/// `std.Options.debug_io` (the default panic and log handlers) breaks the build.
-const threaded_io_broken = builtin.os.tag.isDarwin() and builtin.os.tag != .macos;
+const c_language = @import("kit").c_language;
+const threaded_io_broken = c_language.threaded_io_broken;
 
 /// The panic handler for the library: the default, except where
 /// `threaded_io_broken`, where a panic traps without printing.
-pub const panic = if (threaded_io_broken)
-    std.debug.FullPanic(trapPanic)
-else
-    std.debug.FullPanic(std.debug.defaultPanic);
-
-fn trapPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
-    @branchHint(.cold);
-    _ = msg;
-    _ = first_trace_addr;
-    @trap();
-}
+pub const panic = c_language.panic;
 
 // Cross-format conversion helpers used by `fig_document_serialize`. Both are
 // format-agnostic AST passes, always compiled in: `Lossless` for the `$fig`

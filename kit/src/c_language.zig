@@ -12,6 +12,7 @@
 //! `FigTableView`, an extern record, and reads it in place.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const abi = @import("abi.zig");
 const table = @import("table.zig");
 const contract = @import("contract.zig");
@@ -20,6 +21,27 @@ const contract = @import("contract.zig");
 extern fn fig_language_register(vt: *const abi.VTable, out_format: *c_int, out_err: ?*abi.ErrorInfo) c_int;
 extern fn fig_table_extend(t: *anyopaque, which: c_int, n: usize) ?*anyopaque;
 extern fn fig_format_by_name(name: [*:0]const u8) c_int;
+
+/// Whether `std.Io.Threaded` fails to compile for this target. On iOS and its
+/// siblings Zig 0.17.0's `Threaded` reaches its process spawning, which reads a
+/// `NullFile.fd` those targets do not have, so anything that touches
+/// `std.Options.debug_io` (the default panic and log handlers) breaks the build.
+pub const threaded_io_broken = builtin.os.tag.isDarwin() and builtin.os.tag != .macos;
+
+/// The panic handler for a C library's root (`pub const panic =
+/// c_language.panic;`, fig's own and each language's): the default, except
+/// where `threaded_io_broken`, where a panic traps without printing.
+pub const panic = if (threaded_io_broken)
+    std.debug.FullPanic(trapPanic)
+else
+    std.debug.FullPanic(std.debug.defaultPanic);
+
+fn trapPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
+    @branchHint(.cold);
+    _ = msg;
+    _ = first_trace_addr;
+    @trap();
+}
 
 /// The exports for the Zig language `L`, registered as `fig_<name>_register`.
 pub fn Exports(comptime L: type, comptime name: []const u8) type {

@@ -2,6 +2,8 @@
 //! `fig_zon_register` (`include/fig/zon.h`), which registers the language with
 //! the fig it is linked beside.
 
+pub const panic = @import("kit").c_language.panic;
+
 comptime {
     _ = @import("kit").c_language.Exports(@import("zon.zig").Language, "zon");
 }

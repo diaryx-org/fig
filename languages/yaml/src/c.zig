@@ -2,6 +2,8 @@
 //! `fig_yaml_register` (`include/fig/yaml.h`), which registers the language
 //! with the fig it is linked beside.
 
+pub const panic = @import("kit").c_language.panic;
+
 comptime {
     _ = @import("kit").c_language.Exports(@import("yaml.zig").Language, "yaml");
 }

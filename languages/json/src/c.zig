@@ -2,6 +2,8 @@
 //! export `fig_json_register` (`include/fig/json.h`), which registers the
 //! language with the fig it is linked beside.
 
+pub const panic = @import("kit").c_language.panic;
+
 comptime {
     _ = @import("kit").c_language.Exports(@import("json.zig").Language, "json");
 }

@@ -2,6 +2,8 @@
 //! export `fig_dotenv_register` (`include/fig/dotenv.h`), which registers the
 //! language with the fig it is linked beside.
 
+pub const panic = @import("kit").c_language.panic;
+
 comptime {
     _ = @import("kit").c_language.Exports(@import("dotenv.zig").Language, "dotenv");
 }

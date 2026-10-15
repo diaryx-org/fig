@@ -106,6 +106,12 @@ jobs:
           os: ubuntu-latest
           target: x86_64-linux-android
           run: '-'
+        # Linked, not run: the core and the languages each compile for iOS apart
+        # from macOS, and a release found the languages' did not.
+        - key: ios-arm64
+          os: macos-latest
+          target: aarch64-apple-ios
+          run: '-'
         - key: wasm32-wasi
           os: ubuntu-latest
           target: wasm32-wasip1

@@ -39,7 +39,7 @@ nu-protocol = "=0.115.1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 # The native binding, which carries no language, and the figl language, with
 # its `fig` feature (`fig_figl::register()`) and without its serde.
-fig = { path = "../rust/fig", version = "6.0.0" }
+fig = { path = "../rust/fig", version = "6.1.0" }
 fig-figl = { path = "../../languages/figl", version = "6.0.0", default-features = false, features = ["fig"] }
 
 [dev-dependencies]

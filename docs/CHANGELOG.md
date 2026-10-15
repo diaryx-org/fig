@@ -134,6 +134,57 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v6.1.0 — 2026-10-15
+
+### Breaking
+
+- **rust** — the fig crate and its language crates run on fig-core ([`0d93855`](https://github.com/diaryx-org/fig/commit/0d938550870c9d35cc2f6f07f85706236436b6b9))
+- **rust** — delete fig-sys, its payload crates and fig-language-build ([`bcffe69`](https://github.com/diaryx-org/fig/commit/bcffe69252b306ba3007b7dfc7e89337937dca24))
+
+### Added
+
+- **rust** — Span, Token and fig's errors by their Zig names ([`c96aba4`](https://github.com/diaryx-org/fig/commit/c96aba4872f4c4318709218aa43fe1c7805cef1f))
+- **rust** — the kit's leaf modules, ported from the Zig ([`3c4f378`](https://github.com/diaryx-org/fig/commit/3c4f378071c8532d5941809fae1887eda9fa992f))
+- **rust** — the kit's core — table, AST, Document, RowWriter and the Language trait ([`d1913fb`](https://github.com/diaryx-org/fig/commit/d1913fb93c08d076e947af5e504b5034f2c85987))
+- **rust** — port the JSON language (json, jsonc, json5) ([`1883453`](https://github.com/diaryx-org/fig/commit/1883453db068e12ac25f4707181d6240eaca64f1))
+- **rust** — port the flat languages — INI, dotenv and .properties ([`5f0dad6`](https://github.com/diaryx-org/fig/commit/5f0dad68f16e3e34563ccc33c67aff04c926ac52))
+- **rust** — port the TOML language (tokenizer, parser, printer, Language impl) ([`7895e9e`](https://github.com/diaryx-org/fig/commit/7895e9e8348a351b83b9434428959d081f85a40e))
+- **rust** — the format registry, serialization, canonical form and conversion passes ([`c0e00b4`](https://github.com/diaryx-org/fig/commit/c0e00b4452639d5cdebef875d29caa6d938e99f2))
+- **rust** — the registry bundles the languages ported so far ([`c6a5d12`](https://github.com/diaryx-org/fig/commit/c6a5d12b3c6fc82c1e99530a44245830a6396c30))
+- **rust** — the editor — the generic span-splice engine, its regions and splice utilities ([`73b7b7a`](https://github.com/diaryx-org/fig/commit/73b7b7ab23a55dc64504264ae0270af495190377))
+- **rust** — port the YAML language — tokenizer, parser, printer and stream splitter ([`a0d30c8`](https://github.com/diaryx-org/fig/commit/a0d30c8c2abda7731eb87c2eb4767fb0e463e677))
+- **rust** — the registry bundles YAML ([`4865e5f`](https://github.com/diaryx-org/fig/commit/4865e5fd1c49c815fc4acff7aeffd615baa9ba88))
+- **rust** — port the ZON, plist and NestedText languages ([`ba75f23`](https://github.com/diaryx-org/fig/commit/ba75f2302e6acca3af40c782d220ef783a39a28b))
+- **rust** — the registry bundles ZON, plist and NestedText ([`f611393`](https://github.com/diaryx-org/fig/commit/f611393916d66106ca291520d4a59d4007a4581a))
+- **rust** — figl — tokenizer, parser with its diagnostics and warnings, printer and renderTail ([`78bbc79`](https://github.com/diaryx-org/fig/commit/78bbc790d8e6cb85b09b13c405f0d7dc3f39433e))
+- **rust** — the registry bundles figl, so all ten languages register ([`4c84cc2`](https://github.com/diaryx-org/fig/commit/4c84cc23cdf388d8e618c0c42f2653147028c4a9))
+- **rust** — fig_core::api, the logic of src/c_api.zig — statuses, documents, values and editors ([`c702110`](https://github.com/diaryx-org/fig/commit/c7021103cf447c4b2012727a4811aaa6ccf1cea5))
+- **rust** — fig-conform, fig-conformance's JSON-lines adapter over fig-core ([`ce056c0`](https://github.com/diaryx-org/fig/commit/ce056c0757b83b7a029b239538f72463f6f89b98))
+- **rust** — port the helper wire and host languages (wire.zig, host.zig) ([`12ec893`](https://github.com/diaryx-org/fig/commit/12ec893b706d403674ad42a7bfb1bd6b68970fad))
+- **rust** — port the language server (src/lsp/main.zig) as fig-cli's fig-lsp ([`bd7316c`](https://github.com/diaryx-org/fig/commit/bd7316cbcf84d1645b1daa4e59ec0d8ef1ba3d38))
+- **rust** — fig-lsp diagnoses through the figl parser by default ([`464bf9d`](https://github.com/diaryx-org/fig/commit/464bf9dc843b8a1e4edc9a7e0fd26ade56e525df))
+- **rust** — the registration harness constructs an Editor and checks a no-op splice ([`46ddbc6`](https://github.com/diaryx-org/fig/commit/46ddbc65b88b2be82da266aa5863c202669805db))
+- **rust** — port the patch merge engine (src/patch.zig) over the editor ([`f91a207`](https://github.com/diaryx-org/fig/commit/f91a2070d9bc5ab4bc97529be54b1d6404775428))
+- **rust** — port the fig command-line tool (src/cli/*.zig) to fig-cli ([`62c88fe`](https://github.com/diaryx-org/fig/commit/62c88fed04d8420fcd2cd579c746c67c7769f834))
+- **rust** — a bundle feature for the languages global() registers ([`812b0d8`](https://github.com/diaryx-org/fig/commit/812b0d83a525d5c8fd04934f6c3feaa332bb8a7e))
+- **rust** — api Document serializes and diagnoses through a shared reference ([`b69d677`](https://github.com/diaryx-org/fig/commit/b69d677971ad4a6f079068adbdf02f1c17f42628))
+- **rust** — fig-core's table rows in fig.h's layout, and a registry with no bundle ([`e586d07`](https://github.com/diaryx-org/fig/commit/e586d07a60d01d44a31ed0ebeb3ebe684428d196))
+- **rust** — fig-capi, fig's C ABI (fig.h) and wasm module over fig-core ([`e7a6da6`](https://github.com/diaryx-org/fig/commit/e7a6da68eeef394562d467d597c8964fd815ce5b))
+
+### Fixed
+
+- **languages** — each language's C library traps a panic on iOS, as fig's own does ([`afffa04`](https://github.com/diaryx-org/fig/commit/afffa04690df9e821d6a0b1d7fb62a802dc6777b))
+- **rust** — a runtime language states per-row extensions, a parse refusal and a renderer refusal in its own words ([`de58b8f`](https://github.com/diaryx-org/fig/commit/de58b8f36017fb1fd31d18e241de7e339c3fa160))
+- **rust** — a reversed flow-closer range reads as multi-line, as the Zig wasm does ([`2b74f61`](https://github.com/diaryx-org/fig/commit/2b74f61ab562c01d24c5a5812a1926f9150cfc1c))
+- **rust** — Document and Editor stay UnwindSafe on fig-core ([`bab2236`](https://github.com/diaryx-org/fig/commit/bab22360902515657b2bd9e0c2bc917a54fce864))
+
+### Changed
+
+- **rust** — split the kit and the error type out of fig-core into fig-kit ([`81e75d2`](https://github.com/diaryx-org/fig/commit/81e75d268d0f62d5d83361a53d46b2d5b60b5f94))
+- **rust** — move each language into its crate and the rust/ crates into one workspace ([`7e931a9`](https://github.com/diaryx-org/fig/commit/7e931a9979246de07a264c8a84effe366ce71578))
+- **cli** — read the command line with clap ([`1d6ed13`](https://github.com/diaryx-org/fig/commit/1d6ed131c2780d260a0e4e6d6c817af6c869cd27))
+
+
 ## v6.0.0 — 2026-10-14
 
 ### Breaking

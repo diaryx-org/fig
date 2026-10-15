@@ -28,7 +28,7 @@ members = [
 ]
 
 [workspace.package]
-version = "6.0.0"
+version = "6.1.0"
 edition = "2024"
 # The oldest toolchain the workspace builds on. Edition 2024 alone needs 1.85;
 # fig-macros writes let chains (`if a && let Some(x) = …`), stable since 1.88.
@@ -42,24 +42,24 @@ license = "MIT OR Apache-2.0"
 # `dx release` and `zig build version-sync` rewrite these `version = "…"` fields
 # in lockstep, and `zig build version-check` fails on drift.
 [workspace.dependencies]
-fig-macros = { path = "fig-macros", version = "6.0.0" }
-fig = { path = "fig", version = "6.0.0" }
+fig-macros = { path = "fig-macros", version = "6.1.0" }
+fig = { path = "fig", version = "6.1.0" }
 # The kit, the core and fig's ten languages, in Rust. A language without its
 # default features is the language alone, on `fig-kit` (what fig-core's
 # tests and the CLI take); a crate that wants its `register()` and typed
 # API asks for its `fig` or `serde` feature.
-fig-kit = { path = "../../rust/fig-kit", version = "6.0.0" }
-fig-core = { path = "../../rust/fig-core", version = "6.0.0" }
-fig-json = { path = "../../languages/json", version = "6.0.0", default-features = false }
-fig-yaml = { path = "../../languages/yaml", version = "6.0.0", default-features = false }
-fig-toml = { path = "../../languages/toml", version = "6.0.0", default-features = false }
-fig-zon = { path = "../../languages/zon", version = "6.0.0", default-features = false }
-fig-figl = { path = "../../languages/figl", version = "6.0.0", default-features = false }
-fig-ini = { path = "../../languages/ini", version = "6.0.0", default-features = false }
-fig-dotenv = { path = "../../languages/dotenv", version = "6.0.0", default-features = false }
-fig-properties = { path = "../../languages/properties", version = "6.0.0", default-features = false }
-fig-plist = { path = "../../languages/plist", version = "6.0.0", default-features = false }
-fig-nestedtext = { path = "../../languages/nestedtext", version = "6.0.0", default-features = false }
+fig-kit = { path = "../../rust/fig-kit", version = "6.1.0" }
+fig-core = { path = "../../rust/fig-core", version = "6.1.0" }
+fig-json = { path = "../../languages/json", version = "6.1.0", default-features = false }
+fig-yaml = { path = "../../languages/yaml", version = "6.1.0", default-features = false }
+fig-toml = { path = "../../languages/toml", version = "6.1.0", default-features = false }
+fig-zon = { path = "../../languages/zon", version = "6.1.0", default-features = false }
+fig-figl = { path = "../../languages/figl", version = "6.1.0", default-features = false }
+fig-ini = { path = "../../languages/ini", version = "6.1.0", default-features = false }
+fig-dotenv = { path = "../../languages/dotenv", version = "6.1.0", default-features = false }
+fig-properties = { path = "../../languages/properties", version = "6.1.0", default-features = false }
+fig-plist = { path = "../../languages/plist", version = "6.1.0", default-features = false }
+fig-nestedtext = { path = "../../languages/nestedtext", version = "6.1.0", default-features = false }
 # fig-cli's command line. `derive` for its declaration; the default
 # features (std, color, help, usage, error-context, suggestions) for the
 # usage errors and `--help` pages it prints.

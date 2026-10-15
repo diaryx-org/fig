@@ -285,6 +285,10 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // written in erasable syntax only — no `enum`, no parameter properties), and
     // the tests' `using` declarations pass through stripping untouched, so the
     // Node running them must support `using` natively: 24 and later.
+    //
+    // The edit fixtures (`languages/<name>/tests/edits.json`, run by
+    // tools/edit-fixtures.mjs) ride the same gate: they reach the Zig editor
+    // through this binding and the language modules `npm run build` makes.
     const ts_test_script =
         \\set -eu
         \\if ! command -v npm >/dev/null 2>&1; then
@@ -302,6 +306,7 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
         \\fi
         \\npm run build
         \\npm test
+        \\node --conditions=fig-source ../../tools/edit-fixtures.mjs
     ;
     const ts_test = b.addSystemCommand(&.{ "sh", "-c", ts_test_script });
     ts_test.setCwd(b.path("bindings/typescript"));

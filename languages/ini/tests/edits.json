@@ -1,0 +1,203 @@
+{
+  "dialect": "ini",
+  "from": "languages/ini/tests/editor.zig",
+  "cases": [
+    {
+      "id": "set adds a key into an existing section",
+      "source": "[server]\nhost = localhost\n",
+      "steps": [
+        { "op": "setValue", "args": [["server", "port"], "80"], "expect": { "ok": true, "source": "[server]\nhost = localhost\nport = 80\n" } }
+      ]
+    },
+    {
+      "id": "set adds the first key into an empty existing section",
+      "note": "An empty section is a childless block mapping whose span is its name token, not the whole file as the root's is: the root-vs-section split in the engine's block insert.",
+      "source": "[server]\n",
+      "steps": [
+        { "op": "setValue", "args": [["server", "host"], "localhost"], "expect": { "ok": true, "source": "[server]\nhost = localhost\n" } }
+      ]
+    },
+    {
+      "id": "set does not create a missing section",
+      "note": "INI has no literal for an empty nested mapping (`{}` is a two-character string), so `set` cannot start a section. Refused cleanly: no stray line is spliced in.",
+      "source": "name = fig\n",
+      "steps": [
+        { "op": "setValue", "args": [["server", "host"], "localhost"], "expect": { "ok": false, "status": "NotFound" } }
+      ]
+    },
+    {
+      "id": "appendValue and setSequence cannot start a list",
+      "note": "INI has no list, so nothing to start one with.",
+      "source": "[s]\na = 1\n",
+      "steps": [
+        { "op": "appendValue", "args": [["s", "tags"], "x"], "expect": { "ok": false, "status": "NotFound" } },
+        { "op": "setSequence", "args": [["s", "tags"], ["x"]], "expect": { "ok": false, "status": "NotFound" } }
+      ]
+    },
+    {
+      "id": "deleteKey refuses a whole [section], and still deletes a key within it",
+      "note": "Zig error CannotDeleteSection. The section's span is its header's name token; deleteContainer is the op for a section.",
+      "source": "[server]\nhost = localhost\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["server"]], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "deleteKey", "args": [["server", "host"]], "expect": { "ok": true, "source": "[server]\n" } }
+      ]
+    },
+    {
+      "id": "deleteKey on a repeated key takes every spelling",
+      "note": "A repeated key reads as one entry, its value the last spelling's. A delete that took only the first left the key reading on with the next spelling's value (`spelledAgain` in editor.zig).",
+      "source": "a = 1\nb = 2\na = 3\n[s]\nx = 1\nx = 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["a"]], "expect": { "ok": true, "source": "b = 2\n[s]\nx = 1\nx = 2\n" } },
+        { "op": "deleteKey", "args": [["s", "x"]], "expect": { "ok": true, "source": "b = 2\n[s]\n" } }
+      ]
+    },
+    {
+      "id": "deleteKey on a key repeated across a reopened section leaves the reopening, empty",
+      "source": "k = v\n[s]\na = 1\n[t]\nb = 2\n[s]\nc = 3\na = 4\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["s", "a"]], "expect": { "ok": true, "source": "k = v\n[s]\n[t]\nb = 2\n[s]\nc = 3\n" } }
+      ]
+    },
+    {
+      "id": "renameKey on a repeated key renames every spelling",
+      "note": "Afterwards s.z reads 4 and s.a is gone.",
+      "source": "[s]\na = 1\n[t]\nb = 2\n[s]\na = 4\n",
+      "steps": [
+        { "op": "renameKey", "args": [["s", "a"], "z"], "expect": { "ok": true, "source": "[s]\nz = 1\n[t]\nb = 2\n[s]\nz = 4\n" } }
+      ]
+    },
+    {
+      "id": "replaceValue refuses a whole [section], and still replaces a value within it",
+      "note": "Zig error CannotReplaceSection. The section's span is the name token inside the header, so the generic splice used to write `[REPLACED]` and report success, renaming the section while its entries stayed under it.",
+      "source": "[server]\nhost = localhost\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["server"], "REPLACED"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "replaceValue", "args": [["server", "host"], "example.com"], "expect": { "ok": true, "source": "[server]\nhost = example.com\n" } }
+      ]
+    },
+    {
+      "id": "replaceValue at the root rewrites the whole document",
+      "note": "The root's span is the whole file: the one container the section guard exempts, and the reason the guard tests the path rather than sniffing for a `[`, which this source's first line would trip. Raw text, as the Zig test passed it: INI's value serializer cannot write a nested mapping (replaceValue with one is refused as UnsupportedFormat).",
+      "source": "[server]\nhost = localhost\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [[], "[db]\nname = fig\n"], "expect": { "ok": true, "source": "[db]\nname = fig\n" } }
+      ]
+    },
+    {
+      "id": "deleteContainer removes a whole section",
+      "source": "[a]\nx = 1\n[b]\ny = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "[b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "deleteContainer removes every occurrence of a reopened section",
+      "note": "`[a]` is scattered, and its second header is in no node's span. Without the parser's recorded header regions the trailing `[a]` would survive and adopt whatever followed it.",
+      "source": "[a]\nx = 1\n[b]\ny = 2\n[a]\nz = 3\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "[b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "deleteContainer takes every spelling of a key the section repeats",
+      "note": "The gather finds an entry's line through its span, which is the first spelling's; the other spelling used to stay and join the section before it once the headers went.",
+      "source": "[s]\na = 1\n[t]\nb = 2\n[s]\na = 4\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["s"]], "expect": { "ok": true, "source": "[t]\nb = 2\n" } }
+      ]
+    },
+    {
+      "id": "deleteContainer takes a key repeated after a comment within one section",
+      "source": "[t]\nb = 2\n[s]\nx = 1\n; second\nx = 2\ny = 3\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["s"]], "expect": { "ok": true, "source": "[t]\nb = 2\n" } }
+      ]
+    },
+    {
+      "id": "deleteContainer removes an empty reopened header too",
+      "note": "A reopen with no entries under it has nothing to find it by except the recorded header line: a gather that scanned upward from each child would leave it behind.",
+      "source": "[a]\nx = 1\n[b]\ny = 2\n[a]\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "[b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "deleteContainer takes owned comments with the section",
+      "source": "; about a\n[a]\n; about x\nx = 1\n[b]\ny = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "[b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "deleteContainer refuses a root-level scalar key",
+      "note": "Zig error NotASection.",
+      "source": "name = fig\n[a]\nx = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["name"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "moveContainer relocates a section before another, collapsing its fragments",
+      "note": "`a`'s two fragments are removed and written again as one block at `b`. No blank line before it: the relocated block lands at the very start, with nothing before it to separate from.",
+      "source": "[a]\nx = 1\n[b]\ny = 2\n[a]\nz = 3\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["a"], ["b"]], "expect": { "ok": true, "source": "[a]\nx = 1\n[a]\nz = 3\n[b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "moveContainer with a null destination moves to the end",
+      "source": "[a]\nx = 1\n[b]\ny = 2\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["a"], null], "expect": { "ok": true, "source": "[b]\ny = 2\n\n[a]\nx = 1\n" } }
+      ]
+    },
+    {
+      "id": "reorderContainers reorders named sections, leaving others in place",
+      "note": "`b` is untouched; `c` and `a` swap into the slot `a` held.",
+      "source": "[a]\nx = 1\n[b]\ny = 2\n[c]\nz = 3\n",
+      "steps": [
+        { "op": "reorderContainers", "args": [["c", "a"]], "expect": { "ok": true, "source": "[c]\nz = 3\n[a]\nx = 1\n[b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "set in a reopened section appends after its last physical entry",
+      "note": "A reopened section's entries thread onto the tail of one logical child list in file order, so the insert lands after the section's last occurrence with no multi-region gather, unlike TOML's scattered tables.",
+      "source": "[a]\nx = 1\n[b]\nz = 1\n[a]\ny = 2\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "w"], "3"], "expect": { "ok": true, "source": "[a]\nx = 1\n[b]\nz = 1\n[a]\ny = 2\nw = 3\n" } }
+      ]
+    },
+    {
+      "id": "moveKey refuses to move a [section], or to move an entry before one",
+      "note": "Zig error CannotMoveSection. Moving the section relocates its header alone, leaving `y = 2` for whichever section ends up above it; and \"before `[b]`\" is the tail of `[a]`'s body, so the root key `z` would have become `a.z`.",
+      "source": "z = 0\n[a]\nx = 1\n[b]\ny = 2\n",
+      "steps": [
+        { "op": "moveKey", "args": [["b"], ["z"]], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "moveKey", "args": [["z"], ["b"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "moveKey still moves plain entries inside a section",
+      "source": "[a]\nx = 1\ny = 2\nz = 3\n",
+      "steps": [
+        { "op": "moveKey", "args": [["a", "z"], ["a", "y"]], "expect": { "ok": true, "source": "[a]\nx = 1\nz = 3\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "reorderKeys refuses a reorder that shifts a section",
+      "note": "Zig error CannotReorderSections. Used to write `z = 0\\n[a]\\n[b]\\ny = 2\\nx = 1\\n`: `[a]` emptied and `x = 1` rehomed into `b`.",
+      "source": "z = 0\n[b]\ny = 2\n[a]\nx = 1\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["z", "a", "b"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "reorderKeys still reorders entries within a section",
+      "source": "[a]\nx = 1\ny = 2\nz = 3\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [["a"], ["z", "x"]], "expect": { "ok": true, "source": "[a]\nz = 3\nx = 1\ny = 2\n" } }
+      ]
+    }
+  ]
+}

@@ -1442,6 +1442,44 @@ int32_t fig_kit_literal_number(const uint8_t *raw, size_t len);
 size_t fig_kit_json_string_quote(const uint8_t *raw, size_t len, uint8_t quote,
                                  uint8_t *out, size_t out_cap);
 
+// The kit's XML tokenizer, for an XML-shaped format: purely lexical, it
+// knows nothing of which elements mean what. Comments, processing
+// instructions (the `<?xml ...?>` declaration among them) and a DOCTYPE
+// are skipped; an internal DTD subset is refused. A token's span is a
+// byte range of the input; an attribute value's is inside its quotes, a
+// CDATA section's inside its markers, and character data's is raw, its
+// entity references left for the caller to decode.
+#define FIG_XML_LT         0  // `<` opening a start tag
+#define FIG_XML_LT_SLASH   1  // `</` opening an end tag
+#define FIG_XML_GT         2  // `>` closing a tag
+#define FIG_XML_SLASH_GT   3  // `/>` closing an empty element
+#define FIG_XML_EQ         4  // `=` between an attribute's name and value
+#define FIG_XML_NAME       5  // an element or attribute name
+#define FIG_XML_ATTR_VALUE 6  // a quoted attribute value
+#define FIG_XML_CHAR_DATA  7  // a run of character data between tags
+#define FIG_XML_CDATA      8  // a CDATA section's contents
+#define FIG_XML_EOF        9  // the end of the input
+typedef struct FigXmlToken { uint8_t kind, reserved[3]; uint32_t start, end; } FigXmlToken;
+
+// Why fig_kit_xml_tokenize refused its input.
+#define FIG_XML_ERR_UNCLOSED_TAG             1
+#define FIG_XML_ERR_UNCLOSED_ATTRIBUTE_VALUE 2
+#define FIG_XML_ERR_UNCLOSED_COMMENT         3
+#define FIG_XML_ERR_UNCLOSED_CDATA           4
+#define FIG_XML_ERR_UNCLOSED_PI              5
+#define FIG_XML_ERR_UNSUPPORTED_DOCTYPE      6  // a DOCTYPE with an internal subset
+#define FIG_XML_ERR_INVALID_MARKUP           7  // `<` with nothing markup after it, `<` in a value, ...
+#define FIG_XML_ERR_UNEXPECTED_CHARACTER     8  // a byte a tag may not hold where it is
+
+// Tokenize the `len` bytes at `xml`: write up to `cap` tokens to `out` (which
+// may be NULL when `cap` is 0) and return how many there are, the last
+// FIG_XML_EOF. When that is more than `cap`, only `cap` were written: call
+// again with room for them all. Returns SIZE_MAX on a refusal, with its
+// FIG_XML_ERR_* in `*err` (0 when out of memory) and the offset where the
+// tokenizer stopped in `*err_at`; either pointer may be NULL.
+size_t fig_kit_xml_tokenize(const uint8_t *xml, size_t len, FigXmlToken *out,
+                            size_t cap, int32_t *err, size_t *err_at);
+
 #ifdef __cplusplus
 }
 #endif

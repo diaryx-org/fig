@@ -44,7 +44,8 @@ const Diagnostics = @import("diagnostics.zig");
 /// under their `Fig*` names are its, and so is the one `Language` every
 /// format is read, edited and printed through.
 const Runtime = @import("contract/runtime.zig");
-const RowWriter = @import("kit").RowWriter;
+const kit = @import("kit");
+const RowWriter = kit.RowWriter;
 const manifest = @import("kit").manifest;
 
 // The wasm module's half of the runtime-language carrier: a language
@@ -209,6 +210,43 @@ pub export fn fig_kit_literal_number(raw: [*]const u8, len: usize) i32 {
 
 pub export fn fig_kit_json_string_quote(raw: [*]const u8, len: usize, quote: u8, out: [*]u8, out_cap: usize) usize {
     return rules.jsonStringQuote(raw, len, quote, out, out_cap);
+}
+
+/// One XML token: a `kit.xml.Kind` and its span (`FigXmlToken`).
+pub const FigXmlToken = extern struct { kind: u8, reserved: [3]u8 = .{ 0, 0, 0 }, start: u32, end: u32 };
+
+/// `kit.xml.TokenizeError`'s refusals, as `FIG_XML_ERR_*` numbers them.
+const xml_errors = [_]anyerror{
+    error.UnclosedTag,        error.UnclosedAttributeValue, error.UnclosedComment,
+    error.UnclosedCData,      error.UnclosedPI,             error.UnsupportedDoctype,
+    error.InvalidMarkup,      error.UnexpectedCharacter,
+};
+
+/// The kit's XML tokenizer (`kit/src/xml.zig`) over `len` bytes at `xml`:
+/// writes up to `cap` tokens to `out` and returns how many there are, the
+/// last `eof`; when that is more than `cap` the caller asks again with room
+/// for them all. On a refusal returns `maxInt(usize)` with its
+/// `FIG_XML_ERR_*` in `*err` and the offset the tokenizer stopped at in
+/// `*err_at`.
+pub export fn fig_kit_xml_tokenize(xml: ?[*]const u8, len: usize, out: ?[*]FigXmlToken, cap: usize, err: ?*i32, err_at: ?*usize) usize {
+    const fail = std.math.maxInt(usize);
+    const bytes: []const u8 = if (len == 0) "" else (xml orelse return fail)[0..len];
+    if (len > std.math.maxInt(u32)) return fail;
+    const a = activeAllocator();
+    var tz: kit.xml = .{ .allocator = a, .str = bytes };
+    const tokens = tz.tokenize() catch |e| {
+        const code: i32 = for (xml_errors, 1..) |x, i| {
+            if (e == x) break @intCast(i);
+        } else 0;
+        if (err) |p| p.* = code;
+        if (err_at) |p| p.* = tz.pos;
+        return fail;
+    };
+    defer a.free(tokens);
+    if (out) |o| for (tokens[0..@min(cap, tokens.len)], 0..) |t, i| {
+        o[i] = .{ .kind = @intFromEnum(t.kind), .start = @intCast(t.span.start), .end = @intCast(t.span.end) };
+    };
+    return tokens.len;
 }
 
 /// The registered dialect a format handle names, or null for one never

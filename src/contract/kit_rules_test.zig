@@ -155,3 +155,42 @@ test "the kit's JSON string quoting gives every json-string fixture's answer, an
 comptime {
     _ = rows;
 }
+
+test "fig_kit_xml_tokenize gives every xml fixture's tokens or refusal" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(testing.io, "kit/testdata/xml/tokens.json", a, .limited(1 << 20));
+    const fx = (try std.json.parseFromSliceLeaky(Value, a, bytes, .{})).object;
+    const errors = [_][]const u8{ "", "unclosed_tag", "unclosed_attribute_value", "unclosed_comment", "unclosed_cdata", "unclosed_pi", "unsupported_doctype", "invalid_markup", "unexpected_character" };
+    for (cases(fx, "cases")) |cv| {
+        const case = cv.object;
+        const input = case.get("input").?.string;
+        var err: i32 = -1;
+        var at: usize = 0;
+        // Asked first with no room, as a caller that does not know how many.
+        const n = c.fig_kit_xml_tokenize(input.ptr, input.len, null, 0, &err, &at);
+        if (case.get("error")) |want| {
+            testing.expectEqual(std.math.maxInt(usize), n) catch |e| {
+                std.debug.print("xml {s}\n", .{input});
+                return e;
+            };
+            try testing.expectEqualStrings(want.string, errors[@intCast(err)]);
+            try testing.expectEqual(@as(usize, @intCast(case.get("at").?.integer)), at);
+            continue;
+        }
+        const out = try a.alloc(c.FigXmlToken, n);
+        try testing.expectEqual(n, c.fig_kit_xml_tokenize(input.ptr, input.len, out.ptr, out.len, &err, &at));
+        const want = case.get("tokens").?.array.items;
+        try testing.expectEqual(want.len, n);
+        for (want, out) |w, t| {
+            const kind: kit.xml.Kind = @enumFromInt(t.kind);
+            testing.expectEqualStrings(w.array.items[0].string, @tagName(kind)) catch |e| {
+                std.debug.print("xml {s}\n", .{input});
+                return e;
+            };
+            try testing.expectEqual(@as(u32, @intCast(w.array.items[1].integer)), t.start);
+            try testing.expectEqual(@as(u32, @intCast(w.array.items[2].integer)), t.end);
+        }
+    }
+}

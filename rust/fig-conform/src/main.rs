@@ -29,6 +29,23 @@ use fig_core::registry;
 use json::Json;
 
 fn main() {
+    // fig's ten languages, from their crates, registered before anything
+    // looks a format up.
+    let _ = registry::register_bundle(
+        registry::global(),
+        &[
+            &fig_json::LANGUAGE,
+            &fig_yaml::LANGUAGE,
+            &fig_toml::LANGUAGE,
+            &fig_zon::LANGUAGE,
+            &fig_figl::LANGUAGE,
+            &fig_ini::LANGUAGE,
+            &fig_dotenv::LANGUAGE,
+            &fig_properties::LANGUAGE,
+            &fig_plist::LANGUAGE,
+            &fig_nestedtext::LANGUAGE,
+        ],
+    );
     // Deep documents recurse deep; give the reader room.
     let worker = std::thread::Builder::new().stack_size(1 << 30).spawn(serve);
     match worker {

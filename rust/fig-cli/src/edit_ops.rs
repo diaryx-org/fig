@@ -466,6 +466,7 @@ mod tests {
 
     #[test]
     fn apply_edit_reads_end_before_the_end_of_a_path_as_the_last_item() {
+        crate::languages::init();
         let Some(y) = entry("yaml") else { return };
         let item = [key("l"), PathSeg::Index(types::APPEND_INDEX)];
         assert_eq!(apply_edit(&y, b"l: [a, b]\n", &item, b"z", &EditOp::ReplaceValue).unwrap(), b"l: [a, z]\n");
@@ -476,6 +477,7 @@ mod tests {
 
     #[test]
     fn apply_edit_blames_the_spliced_text_not_the_file() {
+        crate::languages::init();
         let Some(t) = entry("toml") else { return };
         let p = [key("rev")];
         assert_eq!(apply_edit(&t, b"rev = \"old\"\n", &p, b"cc5e7e51", &EditOp::ReplaceValue).unwrap_err(), err!(InvalidEditText));
@@ -488,6 +490,7 @@ mod tests {
 
     #[test]
     fn apply_edit_performs_the_structural_ops_on_dotenv() {
+        crate::languages::init();
         let Some(d) = entry("dotenv") else { return };
         assert_eq!(apply_edit(&d, b"", &[], b"bar", &EditOp::InsertKey(b"FOO".to_vec())).unwrap(), b"FOO=bar\n");
         assert_eq!(apply_edit(&d, b"FOO=bar\n", &[], b"qux", &EditOp::InsertKey(b"BAZ".to_vec())).unwrap(), b"FOO=bar\nBAZ=qux\n");
@@ -496,6 +499,7 @@ mod tests {
 
     #[test]
     fn empty_doc_seed_is_the_byte_string_the_registry_declares() {
+        crate::languages::init();
         assert_eq!(empty_doc_seed(types::must_named("json")), Some(&b"{}\n"[..]));
         assert_eq!(empty_doc_seed(types::must_named("toml")), Some(&b""[..]));
         assert_eq!(empty_doc_seed(Format::CANONICAL), None);

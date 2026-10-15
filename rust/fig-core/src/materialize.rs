@@ -485,8 +485,8 @@ fn scalar_text<'a>(node: Node<'a>) -> &'a [u8] {
 // ── tests ────────────────────────────────────────────────────────────────
 //
 // These exercise the pass over what the bundled YAML parser builds, and
-// return early while the global registry has no `yaml` (before the
-// languages are wired into `registry::bundled_languages`). The last runs
+// return early while the global registry has no `yaml` (a test build's global registry holds fig's ten,
+// from the language crates). The last runs
 // over the canonical parser, which spells anchors, aliases and tags too.
 
 #[cfg(test)]

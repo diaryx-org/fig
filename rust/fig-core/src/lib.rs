@@ -1,6 +1,8 @@
 //! fig in Rust: edit config files losslessly, and convert between formats
-//! keeping as much as each can hold. A port of fig's Zig core, kit and
-//! languages (docs/proposals/rust-core.md), file for file.
+//! keeping as much as each can hold. A port of fig's Zig core
+//! (docs/proposals/rust-core.md), file for file, over the kit (`fig-kit`,
+//! re-exported as `kit`). It carries no language: each is a crate of its own
+//! (`fig-json`, …), registered into the [`registry`] by the program using it.
 
 // The kit and the error type are `fig-kit`'s, kept at their old paths here:
 // `fig_core::kit::ast`, `fig_core::Error`, `fig_core::err!`.
@@ -14,7 +16,6 @@ pub mod deserialize;
 pub mod diagnostics;
 pub mod editor;
 pub mod flat_strip;
-pub mod lang;
 pub mod lossless;
 pub mod materialize;
 pub mod patch;

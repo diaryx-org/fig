@@ -658,6 +658,7 @@ mod tests {
 
     #[test]
     fn write_path_spells_a_path_the_way_the_command_line_reads_it() {
+        crate::languages::init();
         let mut w = Vec::new();
         write_path(
             &mut w,

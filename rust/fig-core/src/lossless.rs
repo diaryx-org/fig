@@ -496,8 +496,8 @@ fn copy_map<'a, C: Copier<'a>>(c: &mut C, src_node: Node<'a>) -> Result<Id> {
 //
 // The round trips parse and print through the bundled JSON, TOML, ZON and
 // YAML, reached through the global registry by name; each returns early
-// while that dialect is not registered (before the languages are wired into
-// `registry::bundled_languages`). The canonical parser is the AST-literal
+// while that dialect is not registered (a test build's global registry holds fig's ten,
+// from the language crates). The canonical parser is the AST-literal
 // syntax for tests whose subject isn't a particular format.
 
 #[cfg(test)]

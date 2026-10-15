@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use fig_core::kit::ast::{Builder, Entry, NodeId, NodeKind, NumberKind, SerializeOptions, AST};
 use fig_core::kit::document::Document;
-use fig_core::lang::json::{self as json, Type as JsonType};
+use fig_json::{self as json, Type as JsonType};
 use fig_core::{err, Result};
 
 /// The customizable surface of the projection. The field defaults reproduce
@@ -539,6 +539,7 @@ mod tests {
 
     #[test]
     fn prints_nested_data_as_path_value_lines() {
+        crate::languages::init();
         let mut b = Builder::init();
         let a_v = b.add_int(1).unwrap();
         let b0 = b.add_string(b"x").unwrap();
@@ -560,6 +561,7 @@ mod tests {
 
     #[test]
     fn a_custom_projection_swaps_root_separator_and_terminator() {
+        crate::languages::init();
         let mut b = Builder::init();
         let k = b.add_string(b"a").unwrap();
         let v = b.add_int(1).unwrap();
@@ -573,6 +575,7 @@ mod tests {
 
     #[test]
     fn ungron_tolerates_a_non_identifier_root() {
+        crate::languages::init();
         let doc = parse_document(b"adams-archive = {}\nadams-archive.title = \"hi\"\nadams-archive[\"a-b\"] = 2").unwrap();
         assert_eq!(compact_json(&doc.ast), "{\"title\":\"hi\",\"a-b\":2}\n");
         let scalar = parse_document(b"adams-archive = 7").unwrap();
@@ -581,6 +584,7 @@ mod tests {
 
     #[test]
     fn ungron_reconstructs_the_document() {
+        crate::languages::init();
         let input = b"json = {};\njson.a = 1;\njson.b = [];\njson.b[0] = \"x\";\njson.b[1] = {};\njson[\"weird key\"] = true;\njson.n = null;";
         let doc = parse_document(input).unwrap();
         assert_eq!(compact_json(&doc.ast), "{\"a\":1,\"b\":[\"x\",{}],\"weird key\":true,\"n\":null}\n");
@@ -588,6 +592,7 @@ mod tests {
 
     #[test]
     fn gron_round_trips_through_parse_and_print() {
+        crate::languages::init();
         let input = "json = {};\njson.tab = \"a\\tb\";\njson.q = \"she said \\\"hi\\\"\";\njson[\"dotted.key\"] = [];\njson[\"dotted.key\"][0] = -2.5;\njson.flag = false;\njson.nothing = null;";
         let doc = parse_document(input.as_bytes()).unwrap();
         assert_eq!(gron_of_with(&doc.ast, &Projection::gron()), format!("{input}\n"));
@@ -595,6 +600,7 @@ mod tests {
 
     #[test]
     fn top_level_scalar_is_a_bare_assignment() {
+        crate::languages::init();
         let mut b = Builder::init();
         let root = b.add_string(b"hi").unwrap();
         let ast = b.finish(root).unwrap();
@@ -603,6 +609,7 @@ mod tests {
 
     #[test]
     fn malformed_lines_are_rejected() {
+        crate::languages::init();
         assert_eq!(parse_document(b"no equals here").unwrap_err(), err!(InvalidGron));
         assert_eq!(parse_document(b"json[ = 1").unwrap_err(), err!(InvalidGron));
     }

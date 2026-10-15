@@ -64,13 +64,28 @@ pub use wasm::*;
 static INIT: Once = Once::new();
 
 /// Settle the process-wide registry before anything looks a format up:
-/// empty, unless the `bundle` feature asks for fig-core's languages (which
-/// `registry::global()` registers on its first use).
+/// empty, unless the `bundle` feature asks for fig's ten languages, which it
+/// registers from their crates (Zig's `ensureBundled`; a refusal stops at the
+/// language refused, as its `registerAll(...) catch {}` does).
 pub(crate) fn init() {
     INIT.call_once(|| {
-        if !cfg!(feature = "bundle") {
-            fig_core::registry::install_global(fig_core::registry::Registry::new());
-        }
+        fig_core::registry::install_global(fig_core::registry::Registry::new());
+        #[cfg(feature = "bundle")]
+        let _ = fig_core::registry::register_bundle(
+            fig_core::registry::global(),
+            &[
+                &fig_json::LANGUAGE,
+                &fig_yaml::LANGUAGE,
+                &fig_toml::LANGUAGE,
+                &fig_zon::LANGUAGE,
+                &fig_figl::LANGUAGE,
+                &fig_ini::LANGUAGE,
+                &fig_dotenv::LANGUAGE,
+                &fig_properties::LANGUAGE,
+                &fig_plist::LANGUAGE,
+                &fig_nestedtext::LANGUAGE,
+            ],
+        );
     });
 }
 

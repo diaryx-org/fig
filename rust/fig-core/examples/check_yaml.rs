@@ -15,7 +15,7 @@ use std::sync::Arc;
 use fig_core::kit::ast::SerializeOptions;
 use fig_core::kit::language::Language;
 use fig_core::kit::table::{self, Table};
-use fig_core::lang::yaml::{parser, Type, LANGUAGE};
+use fig_yaml::{parser, Type, LANGUAGE};
 
 fn text(out: &mut Vec<u8>, t: &Table, x: table::Text) {
     if x.is_absent() {
@@ -102,7 +102,7 @@ fn dump(out: &mut Vec<u8>, path: &str, ty: Type) {
     let source = t.source_arc();
     let doc = fig_core::kit::row_writer::RowWriter::adopt(source, &mut t).unwrap();
     out.extend_from_slice(b"--print\n");
-    fig_core::lang::yaml::printer::print(out, &doc.ast);
+    fig_yaml::printer::print(out, &doc.ast);
     out.extend_from_slice(b"--end\n");
 }
 
@@ -191,7 +191,7 @@ fn replay(out: &mut Vec<u8>, width: u16, dump: &str) {
         let doc = fig_core::kit::row_writer::RowWriter::adopt(source, &mut t).unwrap();
         out.extend_from_slice(b"--print\n");
         let opts = SerializeOptions { width, ..Default::default() };
-        fig_core::lang::yaml::printer::print_with(out, &doc.ast, &opts);
+        fig_yaml::printer::print_with(out, &doc.ast, &opts);
         out.extend_from_slice(b"--end\n");
     }
 }

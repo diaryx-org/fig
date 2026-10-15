@@ -18,7 +18,7 @@ use fig_core::kit::ast::{ExtKind, SerializeOptions};
 use fig_core::kit::language::{Language, ParseReport};
 use fig_core::kit::parse_diagnostic::locate_offset;
 use fig_core::kit::table::Table;
-use fig_core::lang::{nestedtext, plist, zon};
+use {fig_nestedtext as nestedtext, fig_plist as plist, fig_zon as zon};
 
 fn language(name: &str) -> Option<&'static dyn Language> {
     match name {

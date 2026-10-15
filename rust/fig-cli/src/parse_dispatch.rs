@@ -436,6 +436,7 @@ mod tests {
 
     #[test]
     fn resolve_spec_selects_a_versions_dialect_row() {
+        crate::languages::init();
         let Some(yaml) = args::parse_format_name("yaml") else { return };
         assert_eq!(yaml, resolve_spec(yaml, None).unwrap());
         assert_eq!("yaml-1.2.2", types::name(resolve_spec(yaml, Some("1.2.2")).unwrap()));
@@ -447,6 +448,7 @@ mod tests {
 
     #[test]
     fn resolve_spec_selects_toml_1_0_which_refuses_what_1_1_added() {
+        crate::languages::init();
         let Some(toml) = args::parse_format_name("toml") else { return };
         let v1_0 = resolve_spec(toml, Some("1.0")).unwrap();
         assert_eq!("toml-1.0", types::name(v1_0));

@@ -9,11 +9,11 @@
 //! # Public API
 //!
 //! The registry is an explicit value, [`Registry`], plus a process-wide one,
-//! [`global()`], which registers the bundled languages ([`register_bundle`]
-//! over `bundled_languages()`) the first time it is reached, as Zig's
-//! `ensureBundled` does. The bundle is fig's ten languages with the `bundle`
-//! feature (the default), and none without it, as a Zig build with every
-//! `-D<name>` off: what the `fig` binding crate links.
+//! [`global()`], which starts empty: fig-core carries no language, as a Zig
+//! build with every `-D<name>` off carries none. A program registers the
+//! languages it uses, each from its crate (`fig-json`, …): all of fig's ten
+//! through [`register_bundle`], as Zig's `ensureBundled` does (the CLI, the
+//! C library's `bundle` feature), or one at a time (the `fig` binding).
 //!
 //! ```text
 //! // The one list of formats (list.zig)
@@ -25,8 +25,8 @@
 //! // The registry
 //! pub const MAX_ENTRIES: usize = 4096;
 //! pub struct Registry;                       // Registry::new()
-//! pub fn global() -> &'static Registry;      // with the bundle registered
-//! pub fn install_global(registry: Registry) -> bool;   // instead of the bundle (fig-capi)
+//! pub fn global() -> &'static Registry;      // empty until a program registers
+//! pub fn install_global(registry: Registry) -> bool;   // instead of global()'s own (fig-capi)
 //! impl Registry {
 //!     pub fn register(&self, lang: &'static dyn Language) -> Result<i32>;
 //!     pub fn register_with(&self, lang: &'static dyn Language, options: RegisterOptions) -> Result<i32>;
@@ -512,58 +512,52 @@ impl Registry {
     }
 }
 
-// ── the bundle, registered on first use ────────────────────────────────────
+// ── the process-wide registry ──────────────────────────────────────────────
 //
-// The languages a build bundles are registered the first time anything
-// looks a format up in the global registry: the CLI's, the tests' and a
-// conformance adapter's.
+// fig-core carries no language: `global()` starts empty, and a program
+// registers the languages it uses into it before it looks a format up — the
+// CLI, the C library's `bundle` feature and the conformance adapter pass the
+// ten language crates' `LANGUAGE`s to `register_bundle`, as Zig's
+// `ensureBundled` registers the `-D<name>` ones; the `fig` binding registers
+// each from its crate (`fig_yaml::register()`).
 
-/// The languages fig bundles, in `LIST_ROWS` order: what `global()`
-/// registers on first use. None without the `bundle` feature, as a Zig
-/// build with every `-D<name>` off bundles none (the `libfig` the bindings
-/// link, whose languages each register from a library of their own).
-#[cfg(not(feature = "bundle"))]
-fn bundled_languages() -> Vec<&'static dyn Language> {
-    Vec::new()
-}
-
-/// The languages fig bundles, in `LIST_ROWS` order: what `global()`
-/// registers on first use.
-#[cfg(feature = "bundle")]
-fn bundled_languages() -> Vec<&'static dyn Language> {
-    use crate::lang;
+/// The languages this crate's own tests read and write: fig's ten, from the
+/// language crates (dev-dependencies), in `LIST_ROWS` order. A test build's
+/// `global()` registers them on first use, as the CLI's does at startup.
+#[cfg(test)]
+pub(crate) fn test_languages() -> Vec<&'static dyn Language> {
     vec![
-        &lang::json::LANGUAGE,
-        &lang::yaml::LANGUAGE,
-        &lang::toml::LANGUAGE,
-        &lang::zon::LANGUAGE,
-        &lang::figl::LANGUAGE,
-        &lang::ini::LANGUAGE,
-        &lang::dotenv::LANGUAGE,
-        &lang::properties::LANGUAGE,
-        &lang::plist::LANGUAGE,
-        &lang::nestedtext::LANGUAGE,
+        &fig_json::LANGUAGE,
+        &fig_yaml::LANGUAGE,
+        &fig_toml::LANGUAGE,
+        &fig_zon::LANGUAGE,
+        &fig_figl::LANGUAGE,
+        &fig_ini::LANGUAGE,
+        &fig_dotenv::LANGUAGE,
+        &fig_properties::LANGUAGE,
+        &fig_plist::LANGUAGE,
+        &fig_nestedtext::LANGUAGE,
     ]
 }
 
 static GLOBAL: OnceLock<Registry> = OnceLock::new();
 
-/// The process-wide registry, with the bundle registered (Zig's module-level
-/// registry and its `ensureBundled`). A refusal while registering the bundle
-/// is swallowed, as Zig's `registerAll(...) catch {}` does, leaving the
-/// languages registered before it.
+/// The process-wide registry (Zig's module-level registry): empty until a
+/// program registers its languages (`register_bundle(global(), &[...])`).
+/// In this crate's own test build it holds fig's ten languages, registered
+/// on first use.
 pub fn global() -> &'static Registry {
     GLOBAL.get_or_init(|| {
         let r = Registry::new();
-        let _ = register_bundle(&r, &bundled_languages());
+        #[cfg(test)]
+        let _ = register_bundle(&r, &test_languages());
         r
     })
 }
 
-/// Make `registry` the process-wide one, in place of the bundle `global()`
-/// would register on first use. A host that bundles no language — fig's C
-/// library, whose formats are each registered by the program that links
-/// it — installs an empty one before anything looks a format up. `false`
+/// Make `registry` the process-wide one, in place of the empty one `global()`
+/// would make on first use (fig's C library installs one before anything
+/// looks a format up). `false`
 /// when the global registry is already settled, and nothing changes.
 pub fn install_global(registry: Registry) -> bool {
     GLOBAL.set(registry).is_ok()

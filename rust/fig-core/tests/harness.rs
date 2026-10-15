@@ -20,23 +20,22 @@ use fig_core::kit::ast::{NodeKind, SerializeOptions, AST};
 use fig_core::kit::document::Document;
 use fig_core::kit::language::{Dialect, DialectInfo, Language};
 use fig_core::kit::span::Span;
-use fig_core::lang;
 use fig_core::serialize::{serialize_with, Target};
 
-/// The languages this crate bundles, in `LIST_ROWS` order (Zig's
+/// fig's ten languages, from their crates, in `LIST_ROWS` order (Zig's
 /// `list.rows` filtered by `bundle.bundles`).
 fn bundled() -> Vec<&'static dyn Language> {
     vec![
-        &lang::json::LANGUAGE,
-        &lang::yaml::LANGUAGE,
-        &lang::toml::LANGUAGE,
-        &lang::zon::LANGUAGE,
-        &lang::figl::LANGUAGE,
-        &lang::ini::LANGUAGE,
-        &lang::dotenv::LANGUAGE,
-        &lang::properties::LANGUAGE,
-        &lang::plist::LANGUAGE,
-        &lang::nestedtext::LANGUAGE,
+        &fig_json::LANGUAGE,
+        &fig_yaml::LANGUAGE,
+        &fig_toml::LANGUAGE,
+        &fig_zon::LANGUAGE,
+        &fig_figl::LANGUAGE,
+        &fig_ini::LANGUAGE,
+        &fig_dotenv::LANGUAGE,
+        &fig_properties::LANGUAGE,
+        &fig_plist::LANGUAGE,
+        &fig_nestedtext::LANGUAGE,
     ]
 }
 

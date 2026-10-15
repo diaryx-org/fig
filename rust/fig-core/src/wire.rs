@@ -2088,7 +2088,7 @@ pub(crate) mod tests {
     fn a_print_refusal_code_is_the_failure_it_names() {
         let s = Scripted::new("", "", "\"error\":{\"code\":2,\"message\":\"keys are strings\"}");
         let l = language(&s, WIRE_KV);
-        let doc = crate::lang::json::LANGUAGE.parse(b"{\"a\":1}", 0).unwrap();
+        let doc = fig_json::LANGUAGE.parse(b"{\"a\":1}", 0).unwrap();
         assert_eq!(err!(NonStringKey), l.print(0, &doc.ast, &SerializeOptions::default(), &mut Vec::new()).unwrap_err());
         let s = Scripted::new("", "", "\"error\":{\"code\":-32000,\"message\":\"no\"}");
         let l = language(&s, WIRE_KV);

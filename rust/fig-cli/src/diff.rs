@@ -293,16 +293,19 @@ mod tests {
 
     #[test]
     fn identical_text_writes_nothing() {
+        crate::languages::init();
         assert_eq!(diff("a\nb\nc\n", "a\nb\nc\n", 3), "");
     }
 
     #[test]
     fn single_line_change_in_the_middle_full_context() {
+        crate::languages::init();
         assert_eq!(diff("a\nb\nc\nd\ne\n", "a\nb\nX\nd\ne\n", 3), "--- f\n+++ f\n@@ -1,5 +1,5 @@\n a\n b\n-c\n+X\n d\n e\n");
     }
 
     #[test]
     fn two_distant_changes_stay_in_separate_hunks() {
+        crate::languages::init();
         let old = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n";
         let new = "1\n2\nX\n4\n5\n6\n7\n8\n9\n10\nY\n12\n";
         assert_eq!(
@@ -313,16 +316,19 @@ mod tests {
 
     #[test]
     fn pure_insertion_at_start_reports_a_zero_count_old_range() {
+        crate::languages::init();
         assert_eq!(diff("a\nb\n", "x\na\nb\n", 0), "--- f\n+++ f\n@@ -0,0 +1,1 @@\n+x\n");
     }
 
     #[test]
     fn pure_insertion_at_start_with_context_pulls_in_trailing_lines() {
+        crate::languages::init();
         assert_eq!(diff("a\nb\n", "x\na\nb\n", 3), "--- f\n+++ f\n@@ -1,2 +1,3 @@\n+x\n a\n b\n");
     }
 
     #[test]
     fn no_trailing_newline_on_either_side() {
+        crate::languages::init();
         assert_eq!(diff("a\nb", "a\nX", 3), "--- f\n+++ f\n@@ -1,2 +1,2 @@\n a\n-b\n+X\n");
     }
 }

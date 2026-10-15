@@ -193,7 +193,7 @@ mod tests {
     }
 
     fn native_parse(_lang: u32, _dialect: &str, input: &[u8], out: &mut Table) -> std::result::Result<(), ErrorInfo> {
-        crate::lang::dotenv::LANGUAGE.parse_table(input, 0, out).map_err(|e| ErrorInfo { message: e.name().into(), ..Default::default() })
+        fig_dotenv::LANGUAGE.parse_table(input, 0, out).map_err(|e| ErrorInfo { message: e.name().into(), ..Default::default() })
     }
 
     fn native_print(_lang: u32, _dialect: &str, _view: &table::View<'_>, _options: &PrintOptions) -> std::result::Result<Vec<u8>, ErrorInfo> {

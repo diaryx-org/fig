@@ -2,7 +2,10 @@
 name = "fig-conform"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+# A member of fig's one Rust workspace, bindings/rust.
+workspace = "../../bindings/rust"
 description = "fig-conformance's JSON-lines adapter over fig-core: parse, print, split and edit, answered as fig's TypeScript binding answers them"
 publish = false
 
@@ -11,4 +14,16 @@ name = "fig-conform"
 path = "src/main.rs"
 
 [dependencies]
-fig-core = { path = "../fig-core" }
+fig-core = { workspace = true }
+# fig's ten languages, each the language alone (no `fig` binding),
+# registered at startup.
+fig-json = { workspace = true }
+fig-yaml = { workspace = true }
+fig-toml = { workspace = true }
+fig-zon = { workspace = true }
+fig-figl = { workspace = true }
+fig-ini = { workspace = true }
+fig-dotenv = { workspace = true }
+fig-properties = { workspace = true }
+fig-plist = { workspace = true }
+fig-nestedtext = { workspace = true }

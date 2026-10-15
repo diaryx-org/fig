@@ -609,6 +609,7 @@ mod tests {
 
     #[test]
     fn every_format_the_help_lists_is_one_the_argument_parser_accepts() {
+        crate::languages::init();
         for list in [format_list("", &[]), format_list("", &["gron"])] {
             for name in list.split([',', ' ', '\n']).filter(|s| !s.is_empty()) {
                 assert!(crate::args::parse_format_name(name).is_some(), "{name}");

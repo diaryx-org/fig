@@ -53,9 +53,8 @@ indexmap = ["dep:indexmap"]
 helper = ["dep:serde_json"]
 
 [dependencies]
-# fig's core, kit and languages, in Rust, without its `bundle` feature: the
-# registry carries no language until a program adds the language crates it
-# uses (`fig-yaml`, …) and registers each.
+# fig's core, in Rust: its registry carries no language until a program adds
+# the language crates it uses (`fig-yaml`, …) and registers each.
 fig-core = { workspace = true }
 serde = { version = "1", optional = true }
 fig-macros = { workspace = true, optional = true }
@@ -67,20 +66,21 @@ serde = { version = "1", features = ["derive"] }
 # The kit's shared fixtures (`kit/testdata/`) are JSON.
 serde_json = "1"
 # Every language, for the tests to read and write: each registers from its
-# own library (`tests/common`, `src/test_languages.rs`), and without their
-# default `serde`, which would turn fig's on for a test run without it. By
-# path alone, so `cargo publish` drops them: each depends on this crate,
-# and is published after it.
-fig-json = { path = "../../../languages/json", default-features = false }
-fig-yaml = { path = "../../../languages/yaml", default-features = false, features = ["serde"] }
-fig-toml = { path = "../../../languages/toml", default-features = false }
-fig-zon = { path = "../../../languages/zon", default-features = false }
-fig-figl = { path = "../../../languages/figl", default-features = false }
-fig-ini = { path = "../../../languages/ini", default-features = false }
-fig-dotenv = { path = "../../../languages/dotenv", default-features = false }
-fig-properties = { path = "../../../languages/properties", default-features = false }
-fig-plist = { path = "../../../languages/plist", default-features = false }
-fig-nestedtext = { path = "../../../languages/nestedtext", default-features = false }
+# own crate (`tests/common` through its `register()`, `src/test_languages.rs`
+# its `LANGUAGE`), with its `fig` feature and without its default `serde`,
+# which would turn fig's on for a test run without it. By path alone, so
+# `cargo publish` drops them: each depends on this crate, and is published
+# after it.
+fig-json = { path = "../../../languages/json", default-features = false, features = ["fig"] }
+fig-yaml = { path = "../../../languages/yaml", default-features = false, features = ["fig", "serde"] }
+fig-toml = { path = "../../../languages/toml", default-features = false, features = ["fig"] }
+fig-zon = { path = "../../../languages/zon", default-features = false, features = ["fig"] }
+fig-figl = { path = "../../../languages/figl", default-features = false, features = ["fig"] }
+fig-ini = { path = "../../../languages/ini", default-features = false, features = ["fig"] }
+fig-dotenv = { path = "../../../languages/dotenv", default-features = false, features = ["fig"] }
+fig-properties = { path = "../../../languages/properties", default-features = false, features = ["fig"] }
+fig-plist = { path = "../../../languages/plist", default-features = false, features = ["fig"] }
+fig-nestedtext = { path = "../../../languages/nestedtext", default-features = false, features = ["fig"] }
 
 # The helper executable `tools/cli-lang-check.sh` spawns from the CLI. The
 # wire is JSON-RPC 2.0, which the `helper` module reads with `serde_json`.

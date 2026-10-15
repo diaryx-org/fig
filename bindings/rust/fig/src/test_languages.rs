@@ -1,5 +1,5 @@
 //! The languages fig's own unit tests read and write, each registered as its
-//! language crate registers it — `fig-core`'s own implementation, through
+//! language crate registers it — the crate's `LANGUAGE`, through
 //! [`crate::language::register_core`] — since the crates' `register()`
 //! returns another copy of this crate's `Format`, a unit test's being the
 //! crate under test.
@@ -12,18 +12,17 @@ use std::sync::Once;
 pub fn by_name(name: &str) -> Format {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        use fig_core::lang;
         let languages: [&'static dyn fig_core::kit::language::Language; 10] = [
-            &lang::json::LANGUAGE,
-            &lang::yaml::LANGUAGE,
-            &lang::toml::LANGUAGE,
-            &lang::zon::LANGUAGE,
-            &lang::figl::LANGUAGE,
-            &lang::ini::LANGUAGE,
-            &lang::dotenv::LANGUAGE,
-            &lang::properties::LANGUAGE,
-            &lang::plist::LANGUAGE,
-            &lang::nestedtext::LANGUAGE,
+            &fig_json::LANGUAGE,
+            &fig_yaml::LANGUAGE,
+            &fig_toml::LANGUAGE,
+            &fig_zon::LANGUAGE,
+            &fig_figl::LANGUAGE,
+            &fig_ini::LANGUAGE,
+            &fig_dotenv::LANGUAGE,
+            &fig_properties::LANGUAGE,
+            &fig_plist::LANGUAGE,
+            &fig_nestedtext::LANGUAGE,
         ];
         for language in languages {
             crate::language::register_core(language).expect("a language registers");

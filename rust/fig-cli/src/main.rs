@@ -266,6 +266,7 @@ fn dispatch(stdout_terminal: &mut Terminal, stderr_terminal: &mut Terminal, conf
 mod tests {
     #[test]
     fn log_lines_are_one_line_in_the_cli_voice() {
+        crate::languages::init();
         // The body's trailing newline is dropped; nothing else to check
         // without capturing standard error.
         assert_eq!("No path provided.\n".trim_end_matches('\n'), "No path provided.");

@@ -87,10 +87,30 @@ thread_local! {
 
 /// Called once from `main` before `parse_config`, which is where names and
 /// extensions are resolved: the languages this binary carries, registered
-/// before anything looks one up.
+/// before anything looks one up (Zig's `ensureBundled`). Once per process;
+/// a refusal stops at the language refused, as Zig's `registerAll(...)
+/// catch {}` does.
 pub fn init() {
-    let _ = registry::global();
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = registry::register_bundle(registry::global(), &BUNDLED);
+    });
 }
+
+/// The languages this binary carries, each from its crate, in `LIST_ROWS`
+/// order.
+const BUNDLED: [&'static dyn Language; 10] = [
+    &fig_json::LANGUAGE,
+    &fig_yaml::LANGUAGE,
+    &fig_toml::LANGUAGE,
+    &fig_zon::LANGUAGE,
+    &fig_figl::LANGUAGE,
+    &fig_ini::LANGUAGE,
+    &fig_dotenv::LANGUAGE,
+    &fig_properties::LANGUAGE,
+    &fig_plist::LANGUAGE,
+    &fig_nestedtext::LANGUAGE,
+];
 
 // ── the languages fig ships (Zig's `fig.bundle`) ───────────────────────────
 
@@ -818,6 +838,7 @@ mod tests {
 
     #[test]
     fn expand_argv_a_leading_tilde_in_any_argument_is_home() {
+        crate::languages::init();
         let argv = expand_argv_with(
             &["fig-lua".to_string(), "~/.config/fig/languages/dotenv.lua".to_string(), "not~here".to_string()],
             Some("/home/adam"),
@@ -827,6 +848,7 @@ mod tests {
 
     #[test]
     fn every_shipped_dialect_is_a_list_row_language() {
+        crate::languages::init();
         for (name, _, _) in SHIPPED {
             assert!(registry::list_has(name));
         }

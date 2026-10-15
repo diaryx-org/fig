@@ -1407,6 +1407,7 @@ mod tests {
 
     #[test]
     fn parse_path_reads_the_append_sentinel_and_literal_indices() {
+        crate::languages::init();
         let dash = parse_path(b"list[-]").unwrap();
         assert_eq!(dash, [PathSeg::Key(b"list".to_vec()), PathSeg::Index(APPEND_INDEX)]);
         assert_eq!(parse_path(b"list[$]").unwrap()[1], PathSeg::Index(APPEND_INDEX));
@@ -1415,6 +1416,7 @@ mod tests {
 
     #[test]
     fn parse_path_takes_a_key_with_a_dot_or_bracket_quoted_bracketed_or_escaped() {
+        crate::languages::init();
         let key = |p: &[u8]| parse_path(p).unwrap();
         assert_eq!(key(b"a.\"b.c\""), [PathSeg::Key(b"a".to_vec()), PathSeg::Key(b"b.c".to_vec())]);
         assert_eq!(key(b"a.'b.c'"), [PathSeg::Key(b"a".to_vec()), PathSeg::Key(b"b.c".to_vec())]);
@@ -1427,6 +1429,7 @@ mod tests {
 
     #[test]
     fn parse_config_routes_insert_delete_to_the_right_action() {
+        crate::languages::init();
         let c = parse(&["fig", "insert", "f.yaml", "a.b", "1"]).unwrap();
         assert_eq!(c.action, CliAction::Insert);
         let c = parse(&["fig", "delete", "f.yaml", "a[-]"]).unwrap();
@@ -1436,6 +1439,7 @@ mod tests {
 
     #[test]
     fn parse_config_hands_an_unknown_action_to_fig_action() {
+        crate::languages::init();
         let c = parse(&["fig", "schema", "lint", "--input", "x"]).unwrap();
         let CliActionOptions::External(e) = c.options else { panic!() };
         assert_eq!(e.program.as_deref(), Some("fig-schema"));
@@ -1447,6 +1451,7 @@ mod tests {
 
     #[test]
     fn external_command_name_accepts_only_words_that_could_name_a_program() {
+        crate::languages::init();
         assert_eq!(external_command_name("schema"), Some("schema"));
         assert_eq!(external_command_name("a_b-1"), Some("a_b-1"));
         assert_eq!(external_command_name("--colour"), None);
@@ -1457,12 +1462,14 @@ mod tests {
 
     #[test]
     fn md_names_no_language() {
+        crate::languages::init();
         assert!(detect_language_from_file_ending("x.md").is_none());
         assert!(detect_language_from_file_ending("x.markdown").is_none());
     }
 
     #[test]
     fn yml_is_an_accepted_spelling_of_yaml() {
+        crate::languages::init();
         assert_eq!(parse_format_name("yml"), parse_format_name("yaml"));
         assert_eq!(detect_language_from_file_ending("a.yml").map(|d| d.format), parse_format_name("yaml"));
     }

@@ -26,7 +26,7 @@ use std::io::Write;
 
 use fig_core::kit::ast::{NodeId, NodeKind, SerializeOptions, AST};
 use fig_core::kit::language::{Language, ParseReport};
-use fig_core::lang::figl;
+use fig_figl as figl;
 
 fn dialect_of(name: &str) -> u8 {
     match name {

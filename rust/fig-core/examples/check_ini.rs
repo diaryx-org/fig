@@ -21,7 +21,7 @@ use fig_core::kit::document::MentionKind;
 use fig_core::kit::language::{Language, ParseReport};
 use fig_core::kit::parse_diagnostic;
 use fig_core::kit::table::{self, Table};
-use fig_core::lang::{dotenv, ini, properties};
+use {fig_dotenv as dotenv, fig_ini as ini, fig_properties as properties};
 
 fn language_of(name: &str) -> Option<&'static dyn Language> {
     match name {

@@ -137,8 +137,8 @@ pub fn serialize_node_with(ast: &AST, out: &mut Vec<u8>, target: &Target, id: No
 // ── trees built by hand, printed through the registry ──────────────────────
 //
 // These need the bundled JSON, JSON5 and YAML; each returns early while the
-// global registry has no such dialect (before the languages are wired into
-// `registry::bundled_languages`).
+// global registry has no such dialect (a test build's global registry holds fig's ten,
+// from the language crates).
 
 #[cfg(test)]
 mod tests {

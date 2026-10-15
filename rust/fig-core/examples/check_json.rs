@@ -16,7 +16,7 @@ use std::io::Write;
 use fig_core::kit::ast::SerializeOptions;
 use fig_core::kit::language::{Language, ParseReport};
 use fig_core::kit::parse_diagnostic::locate_offset;
-use fig_core::lang::json::{Type, LANGUAGE};
+use fig_json::{Type, LANGUAGE};
 
 fn dialect_named(name: &str) -> Option<Type> {
     match name {

@@ -15,7 +15,7 @@
 
 use fig_core::kit::ast::{NodeId, NodeKind, SerializeOptions, AST};
 use fig_core::kit::language::{Dialect, Language, ParseReport};
-use fig_core::lang::toml::LANGUAGE;
+use fig_toml::LANGUAGE;
 
 fn dump(ast: &AST, id: NodeId, depth: usize, out: &mut Vec<u8>) {
     let pad = "  ".repeat(depth);
@@ -238,7 +238,7 @@ fn run(path: &str, dialect: Dialect, options: &SerializeOptions, canon: bool, as
             let loc = fig_core::kit::parse_diagnostic::locate_offset(&input, d.offset);
             format!("{}:{}", loc.line, loc.column)
         });
-        format!("{}\t{}\t{}", e.name(), fig_core::lang::toml::parser::describe(e), at.unwrap_or_default())
+        format!("{}\t{}\t{}", e.name(), fig_toml::parser::describe(e), at.unwrap_or_default())
     })?;
     let mut out = Vec::new();
     if canon {

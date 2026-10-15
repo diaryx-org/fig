@@ -23,11 +23,11 @@ use fig_core::kit::manifest::Literal;
 use fig_core::kit::table::Table;
 use fig_core::registry::{self, RegisterOptions, Registry};
 use fig_core::wire::{self, json::Value, Transport};
-use fig_core::{err, lang, Result};
+use fig_core::{err, Result};
 
-/// The languages this crate bundles (`registry`'s bundle).
+/// The languages these tests register, from their crates.
 fn bundled() -> Vec<&'static dyn Language> {
-    vec![&lang::json::LANGUAGE, &lang::toml::LANGUAGE, &lang::ini::LANGUAGE, &lang::dotenv::LANGUAGE, &lang::properties::LANGUAGE]
+    vec![&fig_json::LANGUAGE, &fig_toml::LANGUAGE, &fig_ini::LANGUAGE, &fig_dotenv::LANGUAGE, &fig_properties::LANGUAGE]
 }
 
 /// The table of `doc` as the wire spells it, for comparing two.
@@ -129,7 +129,7 @@ fn every_compiled_language_registers_through_the_contract_and_reads_its_samples_
 #[test]
 fn a_languages_diagnostics_cross_the_contract_a_refusals_message_and_offset_and_the_warnings_of_a_clean_parse() {
     let r = Registry::new();
-    r.register(prefixed(&lang::dotenv::LANGUAGE, "c-")).unwrap();
+    r.register(prefixed(&fig_dotenv::LANGUAGE, "c-")).unwrap();
     let e = r.entry_by_name("c-dotenv").unwrap();
 
     let mut p = registry::Parser::new();

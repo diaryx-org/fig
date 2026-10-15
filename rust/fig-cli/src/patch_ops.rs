@@ -104,6 +104,7 @@ mod tests {
 
     #[test]
     fn apply_to_slice_merges_one_yaml_document_into_another() {
+        crate::languages::init();
         let Some(yaml) = crate::args::parse_format_name("yaml") else { return };
         let patch = types::runtime_entry(yaml).unwrap().parse(b"replicas: 5\n").unwrap();
         let req = Request { at: &[], patch: &patch.ast, from: patch.ast.root, deletes: &[], options: patch::Options::default() };
@@ -114,6 +115,7 @@ mod tests {
 
     #[test]
     fn apply_to_slice_refuses_the_two_formats_with_no_in_place_editor() {
+        crate::languages::init();
         let mut b = Builder::init();
         let n = b.add_null().unwrap();
         let ast = b.finish(n).unwrap();

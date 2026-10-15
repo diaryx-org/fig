@@ -2,7 +2,10 @@
 name = "fig-cli"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+# A member of fig's one Rust workspace, bindings/rust.
+workspace = "../../bindings/rust"
 description = "fig's command-line tool, in Rust"
 
 [[bin]]
@@ -10,10 +13,22 @@ name = "fig"
 path = "src/main.rs"
 
 [dependencies]
-fig-core = { path = "../fig-core" }
+fig-core = { workspace = true }
+# fig's ten languages, each the language alone (no `fig` binding),
+# registered at startup (`languages::init`).
+fig-json = { workspace = true }
+fig-yaml = { workspace = true }
+fig-toml = { workspace = true }
+fig-zon = { workspace = true }
+fig-figl = { workspace = true }
+fig-ini = { workspace = true }
+fig-dotenv = { workspace = true }
+fig-properties = { workspace = true }
+fig-plist = { workspace = true }
+fig-nestedtext = { workspace = true }
 
 [features]
-# fig-lsp diagnoses through the figl parser (`fig_core::lang::figl`).
+# fig-lsp diagnoses through the figl parser (`fig_figl`).
 default = ["figl"]
 figl = []
 # The canonical oracle format, compiled out of a release CLI as Zig's

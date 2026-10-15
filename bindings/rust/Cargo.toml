@@ -1,17 +1,31 @@
 [workspace]
 resolver = "3"
-# Each language's crate sits in its language's package, languages/<name>/.
+# fig in Rust, one workspace:
 #
-# fig's core and its languages are `fig-core` (rust/fig-core), pure Rust: a
-# path dependency here, not a member. It stays in the rust/ workspace, whose
-# CLI, LSP and conformance adapter want its default `bundle` feature; as a
-# member here, `cargo test --workspace` would build it with that feature on
-# and register every language before a program asked for one.
+# - `fig-kit` (rust/fig-kit): what the languages share, and fig's error type.
+#   It depends on nothing.
+# - the ten languages (languages/<name>/, `fig-json`, …): each language's
+#   implementation, in its package's `rust/` beside its Zig, on `fig-kit`
+#   alone, plus the `fig` binding's typed API behind their default `fig`
+#   feature.
+# - `fig-core` (rust/fig-core): the core (editor, registry, conversion, the
+#   helper wire, the C ABI's logic), on `fig-kit`. It carries no language:
+#   its registry starts empty, and a program registers the languages it uses.
+# - `fig` and `fig-macros`: the published binding, on `fig-core`.
+# - `fig-cli` (`fig`, `fig-lsp`), `fig-capi` (the C ABI) and `fig-conform`
+#   (fig-conformance's adapter), each registering all ten at startup.
 #
-# `fig-sys`, the `fig-sys-*` payload crates and `fig-language-build`, which
-# linked fig's Zig core as a C library, are no longer members or
-# dependencies: nothing here needs Zig or a C toolchain.
-members = ["fig", "fig-macros", "../../languages/*"]
+# Nothing here needs Zig or a C toolchain.
+members = [
+    "fig",
+    "fig-macros",
+    "../../languages/*",
+    "../../rust/fig-kit",
+    "../../rust/fig-core",
+    "../../rust/fig-cli",
+    "../../rust/fig-capi",
+    "../../rust/fig-conform",
+]
 
 [workspace.package]
 version = "6.0.0"
@@ -30,21 +44,22 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 fig-macros = { path = "fig-macros", version = "6.0.0" }
 fig = { path = "fig", version = "6.0.0" }
-# The core, its kit and fig's ten languages, in Rust. Without its `bundle`
-# feature: the registry starts empty, and a program registers each language
-# it uses through that language's crate (`fig-yaml`, …), as it did when each
-# was a library linked beside fig's.
-fig-core = { path = "../../rust/fig-core", version = "6.0.0", default-features = false }
-fig-json = { path = "../../languages/json", version = "6.0.0" }
-fig-yaml = { path = "../../languages/yaml", version = "6.0.0" }
-fig-toml = { path = "../../languages/toml", version = "6.0.0" }
-fig-zon = { path = "../../languages/zon", version = "6.0.0" }
-fig-figl = { path = "../../languages/figl", version = "6.0.0" }
-fig-ini = { path = "../../languages/ini", version = "6.0.0" }
-fig-dotenv = { path = "../../languages/dotenv", version = "6.0.0" }
-fig-properties = { path = "../../languages/properties", version = "6.0.0" }
-fig-plist = { path = "../../languages/plist", version = "6.0.0" }
-fig-nestedtext = { path = "../../languages/nestedtext", version = "6.0.0" }
+# The kit, the core and fig's ten languages, in Rust. A language without its
+# default features is the language alone, on `fig-kit` (what fig-core's
+# tests and the CLI take); a crate that wants its `register()` and typed
+# API asks for its `fig` or `serde` feature.
+fig-kit = { path = "../../rust/fig-kit", version = "6.0.0" }
+fig-core = { path = "../../rust/fig-core", version = "6.0.0" }
+fig-json = { path = "../../languages/json", version = "6.0.0", default-features = false }
+fig-yaml = { path = "../../languages/yaml", version = "6.0.0", default-features = false }
+fig-toml = { path = "../../languages/toml", version = "6.0.0", default-features = false }
+fig-zon = { path = "../../languages/zon", version = "6.0.0", default-features = false }
+fig-figl = { path = "../../languages/figl", version = "6.0.0", default-features = false }
+fig-ini = { path = "../../languages/ini", version = "6.0.0", default-features = false }
+fig-dotenv = { path = "../../languages/dotenv", version = "6.0.0", default-features = false }
+fig-properties = { path = "../../languages/properties", version = "6.0.0", default-features = false }
+fig-plist = { path = "../../languages/plist", version = "6.0.0", default-features = false }
+fig-nestedtext = { path = "../../languages/nestedtext", version = "6.0.0", default-features = false }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }

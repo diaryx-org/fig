@@ -3,7 +3,7 @@
 //! fig-lsp — a minimal Language Server for the fig authoring dialect.
 //!
 //! This is a thin shell around the figl parser
-//! (`languages/figl/src/parser.zig`, `fig_core::lang::figl::parser`). It
+//! (`languages/figl/src/parser.zig`, `fig_figl::parser`). It
 //! speaks LSP JSON-RPC over stdio and, for now, does exactly one job well: on
 //! every open/change it re-parses the document and publishes the parser's
 //! teaching diagnostics (DESIGN.md's "every diagnostic names the fix") as
@@ -333,7 +333,7 @@ struct Report {
 /// AST is thrown away (this is a validity check).
 #[cfg(feature = "figl")]
 fn diagnose(text: &[u8]) -> Report {
-    use fig_core::lang::figl::{self, parser};
+    use fig_figl::{self as figl, parser};
     let mut report = parser::Report::default();
     // Recover past each error so the server squiggles the WHOLE file at
     // once, not just the first mistake (`report.errors`, source order).

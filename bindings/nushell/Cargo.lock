@@ -650,14 +650,21 @@ dependencies = [
 [[package]]
 name = "fig-core"
 version = "6.0.0"
+dependencies = [
+ "fig-kit",
+]
 
 [[package]]
 name = "fig-figl"
 version = "6.0.0"
 dependencies = [
  "fig",
- "fig-core",
+ "fig-kit",
 ]
+
+[[package]]
+name = "fig-kit"
+version = "6.0.0"
 
 [[package]]
 name = "find-msvc-tools"

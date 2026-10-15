@@ -221,6 +221,7 @@ mod tests {
 
     #[test]
     fn a_fig_reading_types_what_fig_types_and_keeps_the_rest_a_string() {
+        crate::languages::init();
         if args::parse_format_name("figl").is_none() {
             return;
         }
@@ -252,6 +253,7 @@ mod tests {
 
     #[test]
     fn string_and_raw_take_the_argument_as_it_stands() {
+        crate::languages::init();
         let mut term = Terminal::new(Sink::Discard, TermMode::NoColor);
         let v = read(&mut term, "1.10", Mode::String).unwrap();
         assert_eq!(render(&v, types::must_named("json"), Layout::Natural).unwrap(), b"\"1.10\"");

@@ -51,8 +51,11 @@ const manifest = @import("kit").manifest;
 // by the wasm build alone — it is the TypeScript binding's bridge, not a
 // C ABI entry point, and `fig.h` does not declare it. `abi-check` reads
 // this file's `export fn` markers, so the export lives in its own file.
+// The module is an executable (a reactor); the static library a Rust or C
+// program links on wasm is not, and carries no JavaScript import, so it
+// builds without the wire's zigjr.
 comptime {
-    if (builtin.cpu.arch.isWasm()) _ = @import("wasm_host.zig");
+    if (builtin.cpu.arch.isWasm() and builtin.output_mode == .Exe) _ = @import("wasm_host.zig");
 }
 
 /// Logging for the C ABI build (this file is the static-lib root, so its

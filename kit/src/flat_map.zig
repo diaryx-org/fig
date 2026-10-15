@@ -50,12 +50,17 @@ pub fn lookupChild(arena: *const NodeArena, map_id: AST.Node.Id, key: []const u8
 /// How a repeated key is handled. Every INI/dotenv/`.properties` implementation
 /// in the wild silently lets the later assignment win — unlike TOML, which
 /// hard-errors — so `.overwrite` is what all three callers actually want;
-/// `.err` is NestedText's, which refuses a repeat.
-pub const DuplicatePolicy = enum { overwrite, err };
+/// `.err` is NestedText's, which refuses a repeat. `.first_value` drops the
+/// later entry, and `.keep` adds it beside the first. They are the duplicate
+/// policies of the other kits' row writers, under these names there:
+/// `last_value` (`.overwrite`), `first_value`, `keep` and `error` (`.err`).
+pub const DuplicatePolicy = enum { overwrite, err, first_value, keep };
 pub const DuplicateError = error{DuplicateKey};
 
-/// Whether `putEntry` added a fresh entry or overwrote a repeat.
-pub const PutResult = enum { added, overwrote };
+/// What `putEntry` did with the entry: added it fresh, or met a repeat and
+/// overwrote the first entry's value (`.overwrite`), ignored the later
+/// entry (`.first_value`), or kept it beside the first (`.keep`).
+pub const PutResult = enum { added, overwrote, ignored, kept };
 
 /// What `putEntry` did, and the keyvalue node it added or overwrote.
 pub const Put = struct { result: PutResult, kv: AST.Node.Id };
@@ -83,7 +88,8 @@ pub fn putEntry(
     const w = arena.w;
     // Read from the row; the buffer it may point into moves when the table
     // grows, so it is not kept past the lookup.
-    if (arena.index.get(w, map_id, w.kindOf(key_id).string)) |existing_kv| {
+    const repeat = arena.index.get(w, map_id, w.kindOf(key_id).string);
+    if (repeat) |existing_kv| {
         switch (policy) {
             .err => return error.DuplicateKey,
             .overwrite => {
@@ -91,6 +97,8 @@ pub fn putEntry(
                 try w.set(existing_kv, .{ .keyvalue = .{ .key = old_key, .value = value_id } });
                 return .{ .result = .overwrote, .kv = existing_kv };
             },
+            .first_value => return .{ .result = .ignored, .kv = existing_kv },
+            .keep => {},
         }
     }
     const kv_id = try w.add(
@@ -98,6 +106,8 @@ pub fn putEntry(
         Span.init(w.spanOf(key_id).start, w.spanOf(value_id).end),
     );
     try arena.index.append(w.allocator(), w, map_id, kv_id);
+    // A kept repeat leaves the key finding the first entry.
+    if (repeat != null) return .{ .result = .kept, .kv = kv_id };
     try arena.index.put(w.allocator(), w, kv_id);
     return .{ .result = .added, .kv = kv_id };
 }

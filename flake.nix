@@ -50,7 +50,7 @@
 
         # git-cliff comes with the shared shell: `release changelog` and `release`
         # drive it to regenerate the generated region of docs/CHANGELOG.md. Not
-        # needed to build or test fig — only to cut a release — so `dx` still
+        # needed to build or test fig — only to cut a release — so `release` still
         # says how to get it rather than assuming this shell.
         devShells.default = diaryx-nix.devShells.${system}.rust;
       });

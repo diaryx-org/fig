@@ -2136,6 +2136,50 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn split_stream_crosses_as_byte_ranges_and_input_that_is_not_utf8_never_leaves() {
+        const STREAMS: &str = "\"result\":{\"name\":\"wire-kv\",\"caps\":{\"read\":true},\"dialects\":[{\"name\":\"wire-kv\"}],\
+\"samples\":[\"a\"],\"split_stream\":true}";
+        let s = Scripted::new("", "", "\"result\":[{\"start\":0,\"end\":2,\"explicit\":false},{\"start\":6,\"end\":8,\"explicit\":true}]");
+        let l = language(&s, STREAMS);
+        assert!(l.has_split_stream());
+        let docs = l.split_stream(b"a\n---\nb\n", 0).unwrap().unwrap();
+        assert_eq!(vec![StreamDocument { start: 0, end: 2, explicit: false }, StreamDocument { start: 6, end: 8, explicit: true }], docs);
+        assert_eq!("{\"dialect\":\"wire-kv\",\"input\":\"a\\n---\\nb\\n\"}", s.params());
+
+        let s = Scripted::new("", "", "\"result\":[{\"start\":3,\"end\":2}]");
+        let l = language(&s, STREAMS);
+        assert_eq!(b"a stream document is not {\"start\", \"end\"} byte offsets", l.split_stream_thunk("wire-kv", b"abc").unwrap_err().text());
+        assert_eq!(err!(RuntimeParseFailed), l.split_stream(b"abc", 0).unwrap().unwrap_err());
+
+        // Not UTF-8: refused before a request is written.
+        let before = s.last();
+        let mut t = Table::init(&b"\xff"[..]);
+        let info = l.parse_thunk("wire-kv", b"\xff", &mut t).unwrap_err();
+        assert_eq!(b"the input is not UTF-8, which the helper wire carries as text", info.text());
+        assert_eq!(before, s.last());
+    }
+
+    #[test]
+    fn a_helper_that_exits_or_answers_out_of_step_is_named_in_a_sentence() {
+        struct Gone;
+        impl Transport for Gone {
+            fn exchange(&mut self, _: &[u8]) -> Result<Vec<u8>> {
+                Err(err!(HelperExited))
+            }
+        }
+        assert_eq!(err!(HelperRefused), describe(Box::new(Gone)).unwrap_err());
+        assert_eq!(b"the helper did not describe itself: HelperExited", &registry::last_refusal()[..]);
+        struct Old;
+        impl Transport for Old {
+            fn exchange(&mut self, _: &[u8]) -> Result<Vec<u8>> {
+                Ok(b"{\"ok\":true}".to_vec())
+            }
+        }
+        assert_eq!(err!(HelperRefused), describe(Box::new(Old)).unwrap_err());
+        assert!(String::from_utf8_lossy(&registry::last_refusal()).contains("speaks fig 5's wire"));
+    }
+
+    #[test]
     fn json_reads_strictly_and_keeps_non_integers_as_text() {
         let v = json::parse(b" {\"a\":[1,-2,3.5,1e3,99999999999999999999],\"b\":\"x\\u00e9\\ud83d\\ude00\",\"a\":0} ").unwrap();
         assert_eq!(Some(0), v.get("a").unwrap().as_i64());

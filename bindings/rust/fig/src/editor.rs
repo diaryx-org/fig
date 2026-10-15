@@ -107,6 +107,11 @@ pub struct Editor {
     format: Format,
 }
 
+// SAFETY: as for `Document`: the `FigEditor` (its source copy and the
+// document it reparses) belongs to this handle alone and to no thread. Not
+// `Sync`, its every edit takes `&mut self` anyway.
+unsafe impl Send for Editor {}
+
 impl Editor {
     /// Open an editor over a copy of `input` in the given format.
     pub fn open(input: &[u8], format: Format) -> Result<Self, Error> {

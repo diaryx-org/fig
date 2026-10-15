@@ -422,6 +422,15 @@ pub struct Document {
     raw: NonNull<ffi::FigDocument>,
 }
 
+// SAFETY: a `FigDocument` is owned by this handle alone and tied to no
+// thread: it is allocated from the process allocator (libc's, or a
+// thread-safe one where there is none; `activeAllocator` in c_api.zig),
+// holds no thread-local state, and reads languages from a registry built for
+// concurrent use, whose Rust languages are `Send + Sync`. So it may be moved
+// to, used on and freed on another thread. Not `Sync`: nothing promises two
+// threads may read one document at once.
+unsafe impl Send for Document {}
+
 impl Document {
     pub fn parse(input: &[u8], format: Format) -> Result<Self, Error> {
         let mut raw = std::ptr::null_mut();

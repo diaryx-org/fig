@@ -3,7 +3,7 @@ title = Tasks
 description = Deferred work with a done state — a bug is a task with a repro
 author = adammharris
 created = 2026-09-04
-updated = 2026-10-14
+updated = 2026-10-26
 part_of = [docs](/docs/docs.md)
 contents
 > * [Closed tasks](/docs/tasks/closed/closed.md)
@@ -15,6 +15,7 @@ contents
 > * [A leading BOM hides a YAML document's first key from the editor](/docs/tasks/yaml-bom-first-key.md)
 > * [Deleting or renaming a duplicated key leaves the key readable](/docs/tasks/duplicate-key-delete-and-rename.md)
 > * [The bindings and the JavaScript twins keep a replaced string's quote style](/docs/tasks/bindings-keep-quote-style.md)
+> * [check-figl runs a fig that cargo did not build](/docs/tasks/check-figl-ignores-cargo-target-dir.md)
 ```
 
 # Tasks

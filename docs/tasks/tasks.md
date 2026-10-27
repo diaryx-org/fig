@@ -16,6 +16,7 @@ contents
 > * [Deleting or renaming a duplicated key leaves the key readable](/docs/tasks/duplicate-key-delete-and-rename.md)
 > * [The bindings and the JavaScript twins keep a replaced string's quote style](/docs/tasks/bindings-keep-quote-style.md)
 > * [check-figl runs a fig that cargo did not build](/docs/tasks/check-figl-ignores-cargo-target-dir.md)
+> * [A block comment after the root's closing bracket moves inside it](/docs/tasks/canonical-root-block-comment-moves-inside.md)
 ```
 
 # Tasks

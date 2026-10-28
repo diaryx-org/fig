@@ -1,10 +1,10 @@
 ```fig
 title = The Rust helper reads JSON with fig's json format
 description = `fig::helper` parses and writes JSON-RPC through the `json` language, so a helper built without that feature cannot read a request; it should use serde_json behind a `helper` feature
-status = in-progress
+status = done
 created = 2026-10-12
-updated = 2026-10-13
-part_of = [Tasks](/docs/tasks/tasks.md)
+updated = 2026-10-28
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # The Rust helper reads JSON with fig's json format
@@ -33,13 +33,15 @@ build against it.
 
 ## Where it stands
 
-fig's half is done (495355e): the module reads and writes with
-`serde_json`, behind a `helper` feature that is off by default; `handle`,
-`decode`, `encode` and the `*_to_value` and `*_from_value` functions trade
-`serde_json::Value`; `tinykv_helper` requires the feature and registers no
-language.
+**Status.** Done. fig's half is `feat(rust)!: fig::helper reads and writes
+the wire with serde_json, behind a helper feature` (20f22aa): the module
+reads and writes with `serde_json`, behind a `helper` feature that is off by
+default; `handle`, `decode`, `encode` and the `*_to_value` and
+`*_from_value` functions trade `serde_json::Value`; `tinykv_helper` requires
+the feature and registers no language.
 
-What remains is the runners'. fig-lua and fig-quickjs still build against
-the 5.x `fig::helper`, which traded `fig::Value`. Each turns on the
-`helper` feature and moves its calls to `serde_json::Value` as part of its
-port to fig 6, and this task closes when both build against it.
+The runners' half is their ports to fig 7, each of which turns on the
+`helper` feature and moves its calls to `serde_json::Value`: fig-lua's
+`feat!: build against fig 7, whose helper wire is serde_json` (45764e0) and
+fig-quickjs's `feat!: build against fig 7, whose helper wire is JSON-RPC and
+serde_json` (159da64).

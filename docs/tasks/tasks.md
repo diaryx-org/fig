@@ -7,7 +7,6 @@ updated = 2026-10-26
 part_of = [docs](/docs/docs.md)
 contents
 > * [Closed tasks](/docs/tasks/closed/closed.md)
-> * [The Rust helper reads JSON with fig's json format](/docs/tasks/helper-serde-json.md)
 > * [Four deletes are refused because their splice takes another value](/docs/tasks/delete-splices-taking-other-values.md)
 > * [The JavaScript YAML twin misreads compact sequences two deep](/docs/tasks/yaml-twin-deep-compact-sequences.md)
 > * [Renaming a figl container written over several lines renames only its first line](/docs/tasks/figl-rename-multi-line-container.md)

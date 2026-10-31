@@ -1,13 +1,24 @@
 ```fig
 title = check-figl runs a fig that cargo did not build
 part_of = [Tasks](/docs/tasks/tasks.md)
-status = open
+status = done
 description = cargo xtask check-figl builds fig where cargo is told to and then runs target/debug/fig, so with CARGO_TARGET_DIR set it fails on every mapping, or checks with a stale fig left there
 created = 2026-10-26
-updated = 2026-10-26
+updated = 2026-10-30
 ```
 
 # check-figl runs a fig that cargo did not build
+
+**Status.** Done, in `fix(xtask): sync-figl and check-figl run the fig their
+build wrote` (2026-10-30). `figl.rs` builds the CLI with
+`--message-format=json-render-diagnostics` and runs the `executable` cargo's
+compiler-artifact message names, so it follows `CARGO_TARGET_DIR` and a
+cargo config's `build.target-dir` alike, and never runs a `target/debug/fig`
+another build left. The repro above passes with `CARGO_TARGET_DIR`, with
+`CARGO_BUILD_TARGET_DIR` and with neither, in a checkout with no
+`target/debug/fig`. `abi.rs`'s `target_dir` and the `cli` job in
+`.config/ship.figl`, which runs `$PWD/target/debug/fig`, still assume the
+workspace's `target/`; they are outside this task.
 
 **Where.** `rust/xtask/src/figl.rs`, `run`, behind both `sync-figl` and
 `check-figl`. It builds the CLI with `cargo build -p fig-cli --bin fig`,

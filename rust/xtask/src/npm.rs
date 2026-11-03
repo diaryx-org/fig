@@ -3,16 +3,20 @@
 //! `npm test`, and for the TypeScript binding every language's edit fixtures
 //! through it.
 //!
-//! Where the toolchain is missing — no npm, Node older than 24, or a package
-//! whose `node_modules` was never installed — it skips with a note and
-//! succeeds, so a contributor with Rust alone still gets a useful `ship ci`.
-//! The `typescript` and `wasi` jobs in `.github/workflows/ci.yml` install
-//! Node 24 and run `npm ci` first, so there it runs for real.
+//! Where the toolchain is missing — no npm, Node older than 24, a package
+//! whose `node_modules` was never installed, or for fig-wasi no
+//! `wasm32-wasip1` target — it skips with a note and succeeds, so a
+//! contributor with Rust alone still gets a useful `ship ci`. The `typescript`
+//! and `wasi` jobs in `.github/workflows/ci.yml` install all of it and run the
+//! suites themselves, so there they run for real.
 
 use std::path::Path;
 use std::process::Command;
 
 use crate::{have, root};
+
+/// What fig-wasi's `npm run build` compiles fig's CLI for.
+const WASI_TARGET: &str = "wasm32-wasip1";
 
 pub fn run(args: &[String]) -> crate::Result {
     let (package, extra) = match args {
@@ -21,7 +25,11 @@ pub fn run(args: &[String]) -> crate::Result {
         _ => return Err("takes one package: `typescript` or `wasi`".into()),
     };
     let dir = root().join("bindings").join(package);
-    if let Some(why) = npm_missing(&dir) {
+    let wasi_target_missing = || {
+        (package == "wasi" && !target_installed(WASI_TARGET))
+            .then_some("wasm32-wasip1 target missing — skipping (run `rustup target add wasm32-wasip1`).")
+    };
+    if let Some(why) = npm_missing(&dir).or_else(wasi_target_missing) {
         eprintln!("{package} tests: {why}");
         return Ok(());
     }
@@ -31,6 +39,20 @@ pub fn run(args: &[String]) -> crate::Result {
         crate::run(&dir, "node", &["--conditions=fig-source", "../../tools/edit-fixtures.mjs"])?;
     }
     Ok(())
+}
+
+/// Whether the active toolchain has a `std` for `target`. rustc prints the
+/// libdir of any target it knows, installed or not, so the answer is whether
+/// the directory is there. This asks rustc rather than rustup, which a
+/// toolchain from elsewhere (Nix, a distribution) does not have.
+fn target_installed(target: &str) -> bool {
+    Command::new("rustc")
+        .args(["--print", "target-libdir", "--target", target])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .is_some_and(|libdir| Path::new(libdir.trim()).is_dir())
 }
 
 /// Why the npm package at `dir` cannot be tested here, or `None` when it
@@ -56,4 +78,31 @@ fn npm_missing(dir: &Path) -> Option<&'static str> {
         return Some("node_modules missing — skipping (run `npm ci` in the package first).");
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn host() -> String {
+        let out = Command::new("rustc").args(["--print", "host-tuple"]).output().unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    #[test]
+    fn the_host_target_is_installed() {
+        assert!(target_installed(&host()));
+    }
+
+    /// rustc knows this target, and rustup ships no `std` for it, so its
+    /// libdir is a path that is printed and never there.
+    #[test]
+    fn a_target_rustc_knows_and_the_toolchain_lacks_is_not_installed() {
+        assert!(!target_installed("msp430-none-elf"));
+    }
+
+    #[test]
+    fn a_target_rustc_does_not_know_is_not_installed() {
+        assert!(!target_installed("no-such-target"));
+    }
 }

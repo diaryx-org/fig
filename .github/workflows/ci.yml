@@ -41,8 +41,9 @@ jobs:
     # .config/ship.figl, in order — the workspace's tests with every feature on
     # and with each crate's defaults, the abi/semver/version/vendor/figl guards,
     # the CLI checks and the edit fixtures. It also folds in the TypeScript and
-    # WASI suites, which skip with a note here, with no node_modules installed;
-    # the `typescript` and `wasi` jobs below run them for real, in parallel.
+    # WASI suites, which skip with a note here, the one with no node_modules
+    # installed and the other with no wasm32-wasip1 target; the `typescript` and
+    # `wasi` jobs below run them for real, in parallel.
     #
     # The conformance corpora are not here: they live in fig-conformance.
     # Fuzzing has no natural stopping point, so it runs nightly (fuzz.figl)

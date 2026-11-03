@@ -165,8 +165,9 @@ node tools/edit-fixtures.mjs --command target/release/fig-conform
 > *
 > > # The TypeScript binding's suite, and the edit fixtures again through it;
 > > # then the WASI package's. Each skips with a note without Node 24 and its
-> > # installed node_modules, as on the workflow's `check` runner — the
-> > # `typescript` and `wasi` jobs there install both and run them for real.
+> > # installed node_modules, and the WASI package without the wasm32-wasip1
+> > # target, as on the workflow's `check` runner — the `typescript` and `wasi`
+> > # jobs there install what each needs and run them for real.
 > > id = typescript
 > > name = TypeScript
 > > run = cargo xtask npm-test typescript

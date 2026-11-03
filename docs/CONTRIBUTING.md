@@ -25,7 +25,8 @@ ship ci
 
 It runs the jobs in `.config/ship.figl`: the workspace's tests and every
 release guard (`ship ci --list` lists them; `ship ci <id>` runs one). The TypeScript and WASI suites skip with a note unless Node 24
-and each package's `node_modules` are installed; CI runs them either way.
+and each package's `node_modules` are installed, and the WASI suite also unless the
+`wasm32-wasip1` target is; CI runs them either way.
 
 ## Commit messages
 

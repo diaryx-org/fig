@@ -1,13 +1,18 @@
 ```fig
 title = ship ci builds fig-wasi without the wasm32-wasip1 target
 part_of = [Tasks](/docs/tasks/tasks.md)
-status = open
+status = done
 description = cargo xtask npm-test wasi skips only for a missing npm, a Node older than 24 or missing node_modules, which fig-wasi never has; the check job's runner now has Node 24 and no wasm32-wasip1, so the job fails on main
 created = 2026-10-28
-updated = 2026-10-28
+updated = 2026-11-03
 ```
 
 # ship ci builds fig-wasi without the wasm32-wasip1 target
+
+**Done.** The suite skips with a note: `npm-test wasi` asks rustc for
+`wasm32-wasip1`'s libdir and skips where that directory is not there, and
+the `check` job's comment says so. The `wasi` job installs the target and
+runs `npm run build` itself, so that job still runs the suite for real.
 
 **Where.** `rust/xtask/src/npm.rs`, `npm_missing`, behind the `wasi` job
 in `.config/ship.figl`. It skips the suite, with a note, when npm is

@@ -95,9 +95,18 @@ impl Parser {
         self.claim_leading(root)?;
         // A trailing comment on the same line as the root, then the document's final
         // trivia; any end-of-file orphan comments become the root's dangling run.
+        // The printer writes a container's trailing comment beside its opening
+        // bracket, where `capture_open_trailing` takes back only a line comment;
+        // so a block comment after a multi-line root's close is a bottom comment,
+        // as `finish_element` has it after a nested container's.
         self.skip_inline();
+        let cpos = self.pos;
         if let Some(c) = self.try_comment()? {
-            self.set_trailing(root, c)?;
+            if c.style == Style::Block && self.multiline_container(root, cpos) {
+                self.append_dangling(root, c)?;
+            } else {
+                self.set_trailing(root, c)?;
+            }
         }
         self.collect_leading()?;
         self.claim_dangling(root)?;
@@ -829,6 +838,27 @@ mod tests {
         let ast = parse_abstract(b"[\n  // orphan\n]").unwrap();
         assert_eq!(b"orphan", ast.comments(ast.root).dangling[0].text);
         expect_round_trip(b"{\n  \"a\": 1\n  // dangling at end\n}");
+    }
+
+    /// A block comment after a multi-line root's close is a bottom comment, as it
+    /// is after a nested container's: printed beside the opening bracket, it would
+    /// reparse as the first child's leading comment. The last input is the nightly
+    /// fuzz job's smallest failing input.
+    #[test]
+    fn a_block_comment_after_a_multi_line_roots_close_stays_at_its_bottom() {
+        for input in [&b"{\n\"k\": 1\n} /* b */"[..], b"{\n// a\n} /* b */", b"[\n// a\n] /* b */", b"{\n//\n}/**/"] {
+            expect_round_trip(input);
+        }
+        let ast = parse_abstract(b"{\n\"k\": 1\n} /* b */").unwrap();
+        assert!(ast.comments(ast.root).trailing.is_none());
+        assert_eq!(b"b", ast.comments(ast.root).dangling[0].text);
+        // A line comment there stays the root's trailing comment, printed beside
+        // the opening bracket, and an inline root keeps a block comment after its
+        // close.
+        let line = parse_abstract(b"{\n\"k\": 1\n} // b").unwrap();
+        assert_eq!(b"b", line.comments(line.root).trailing.unwrap().text);
+        expect_round_trip(b"{\n\"k\": 1\n} // b");
+        expect_round_trip(b"{} /* b */");
     }
 
     #[test]

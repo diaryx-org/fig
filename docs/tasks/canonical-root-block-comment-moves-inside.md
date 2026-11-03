@@ -1,13 +1,26 @@
 ```fig
 title = A block comment after the root's closing bracket moves inside it
 part_of = [Tasks](/docs/tasks/tasks.md)
-status = open
+status = done
 description = In the canonical form, a /* */ comment on the line that closes a multi-line root container prints after its opening bracket and reparses as its first child's leading comment, so canonical_round_trip fails; the nightly Fuzz job has failed on it since 2026-10-20
 created = 2026-10-26
-updated = 2026-10-26
+updated = 2026-11-03
 ```
 
 # A block comment after the root's closing bracket moves inside it
+
+**Status.** Done, in `fix(canonical): keep a block comment after a multi-line
+root's close at its bottom` (2026-11-03). `parse_once` does what
+`finish_element` does for a nested container: a block comment after a
+multi-line root's close goes to the root's dangling run, and prints inside
+the closing bracket. A line comment there is still the root's trailing
+comment, printed beside the opening bracket, which `capture_open_trailing`
+takes back; an inline root keeps a block comment after its close. The three
+inputs below and `{\n//\n}/**/` round-trip in
+`a_block_comment_after_a_multi_line_roots_close_stays_at_its_bottom`, and
+`{\n//\n}/**/` and `[\n// a\n] /* b */` are `canonical_seeds` in fig-fuzz.
+Whether the nightly `Fuzz` run goes green is for its first run after this
+merges.
 
 **Where.** `rust/fig-core/src/canonical/parser.rs`, `parse_once`, against
 `printer.rs`, `print` and `container`. `parse_once` binds any comment on the

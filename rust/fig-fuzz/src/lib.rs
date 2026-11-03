@@ -181,6 +181,10 @@ pub fn canonical_seeds() -> Vec<Vec<u8>> {
         b"{\n  \"dt\": @offset_datetime \"1979-05-27T07:32:00Z\",\n  \"d\": @local_date \"1979-05-27\",\n  \"mode\": @enum_literal \"fast\",\n  \"ch\": @char_literal \"65\",\n  \"inf\": @number_special \"Infinity\"\n}".to_vec(),
         b"[&base { \"retries\": 3 }, *base, !!str \"tagged\"]".to_vec(),
         b"{\n  // leading\n  \"a\": /* block */ 1, // trailing\n  \"b\": [2 /* c3 */],\n  \"c\": {}, // on empty\n  // dangling\n}".to_vec(),
+        // A block comment after a multi-line root's close, which once printed
+        // beside its opening bracket and reparsed inside it.
+        b"{\n//\n}/**/".to_vec(),
+        b"[\n// a\n] /* b */".to_vec(),
         format!("{}{}", "[".repeat(512), "]".repeat(512)).into_bytes(),
         format!("{}{}", "[".repeat(513), "]".repeat(513)).into_bytes(),
     ];

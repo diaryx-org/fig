@@ -85,7 +85,7 @@
       "id": "a comment or entry written after a continued last line ends the continuation first [2]",
       "source": "a=1\ntrail=v\\\r\n",
       "steps": [
-        { "op": "setValue", "args": [["n"], 1], "expect": { "ok": true, "source": "a=1\ntrail=v\\\r\n\nn=1\n" } }
+        { "op": "setValue", "args": [["n"], 1], "expect": { "ok": true, "source": "a=1\ntrail=v\\\r\n\nn=1\r\n" } }
       ]
     },
     {

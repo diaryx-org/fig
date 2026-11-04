@@ -1,12 +1,27 @@
 ```fig
 title = An inserted line ends in LF in a CRLF file
 part_of = [Tasks](/docs/tasks/tasks.md)
-status = open
+status = in-progress
 created = 2026-11-04
+updated = 2026-11-04
 description = A key inserted into a CRLF file is written with a bare LF, so one edit leaves the file with mixed line endings; insert_block_key and the flow insert spell the line break as a literal \n
 ```
 
 # An inserted line ends in LF in a CRLF file
+
+**Status.** Fixed in fig, in `fix(editor): a line written into a CRLF file ends
+in CRLF` (2026-11-04); what is left is recording fig-conformance again, once
+that is on `main`. Text the editor writes goes through `splice_lines`, which
+ends each line as the line it follows does, the rule for a file with both
+endings. A line break a value reads as text keeps its LF: TOML's `"""` and
+plist's `<string>` take a carriage return into the string, and `splice_lines`
+compares the two readings. Deleting the first item of a flow list now takes
+the whole CRLF too. The same commit's `tests/crlf.rs` holds these.
+
+Scored against the recordings through `fig-conform`, 301 of the edit cases
+change, all in the CRLF suites. 292 differ only in `\r`. The other 9 are deletes,
+and a `setSequence`, that no longer leave a line of spaces, which is what the same
+edit does in an LF file. Every suite stays at 100% `faithful`.
 
 An edit that adds a key to a CRLF file writes the new line with a bare LF.
 The rest of the file keeps its CRLFs, so one `set` leaves it with mixed line

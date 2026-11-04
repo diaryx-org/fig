@@ -180,6 +180,37 @@ pub fn full_order(order: &[usize], n: usize) -> Vec<usize> {
 
 // ── Zig's `std.mem` helpers, with Zig's semantics ───────────────────────────
 
+/// The line break a line written at `at` ends in: at a line's start, the one
+/// that ended the line above; inside a line, the one that ends it. The first
+/// or last line of a file that has no break there takes the nearest break
+/// the other way, and a file with none at all takes LF.
+pub fn line_break_at(source: &[u8], at: usize) -> &'static [u8] {
+    let before = source[..at].iter().rposition(|&c| c == b'\n');
+    let after = find_byte_from(source, at, b'\n');
+    let starts_line = at == 0 || source[at - 1] == b'\n';
+    let nearest = if starts_line { before.or(after) } else { after.or(before) };
+    match nearest {
+        Some(lf) if lf > 0 && source[lf - 1] == b'\r' => b"\r\n",
+        _ => b"\n",
+    }
+}
+
+/// `text` with every bare LF spelled CRLF; `None` when it has none.
+pub fn crlf_lines(text: &[u8]) -> Option<Vec<u8>> {
+    let bare = |i: usize| text[i] == b'\n' && (i == 0 || text[i - 1] != b'\r');
+    if !(0..text.len()).any(bare) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(text.len() + 8);
+    for i in 0..text.len() {
+        if bare(i) {
+            out.push(b'\r');
+        }
+        out.push(text[i]);
+    }
+    Some(out)
+}
+
 /// `std.mem.indexOf`: the first index of `needle` in `hay`; an empty needle
 /// is found at 0.
 pub fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -298,6 +329,24 @@ mod tests {
         let mut b = [Block { start: 0, end: 0 }, Block { start: 5, end: 0 }];
         tile_blocks(&mut b, 9);
         assert_eq!((5, 9), (b[0].end, b[1].end));
+    }
+
+    #[test]
+    fn a_line_break_is_the_one_the_line_above_ended_in() {
+        assert_eq!(b"\r\n", line_break_at(b"a\r\nb\n", 3));
+        assert_eq!(b"\n", line_break_at(b"a\nb\r\n", 2));
+        // Inside a line, that line's own.
+        assert_eq!(b"\r\n", line_break_at(b"a\nb\r\n", 3));
+        // The last line, unended, and the first, with nothing above it.
+        assert_eq!(b"\r\n", line_break_at(b"a\r\nb", 4));
+        assert_eq!(b"\r\n", line_break_at(b"a\r\nb\n", 0));
+        assert_eq!(b"\n", line_break_at(b"a", 1));
+    }
+
+    #[test]
+    fn crlf_lines_spells_only_a_bare_lf() {
+        assert_eq!(None, crlf_lines(b"a\r\nb"));
+        assert_eq!(Some(b"a\r\nb\r\nc".to_vec()), crlf_lines(b"a\nb\r\nc"));
     }
 
     #[test]

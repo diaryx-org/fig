@@ -18,6 +18,7 @@ contents
 > * [A block comment after the root's closing bracket moves inside it](/docs/tasks/canonical-root-block-comment-moves-inside.md)
 > * [ship ci builds fig-wasi without the wasm32-wasip1 target](/docs/tasks/xtask-ci-builds-fig-wasi-without-its-target.md)
 > * [An inserted line ends in LF in a CRLF file](/docs/tasks/an-inserted-line-ends-in-lf-in-a-crlf-file.md)
+> * [Deleting the first flow entry leaves its comment](/docs/tasks/deleting-the-first-flow-entry-leaves-its-comment.md)
 ```
 
 # Tasks

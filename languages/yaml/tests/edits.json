@@ -716,7 +716,7 @@
       "note": "CRLF: the value's own lines are written as the editor writes lines.",
       "source": "a: 1\r\nb:\r\n  - x\r\n  - y\r\n",
       "steps": [
-        { "op": "replaceValueRaw", "args": [["b", 0], "x: 1\ny: two"], "expect": { "ok": true, "source": "a: 1\r\nb:\r\n  - x: 1\n    y: two\r\n  - y\r\n" } }
+        { "op": "replaceValueRaw", "args": [["b", 0], "x: 1\ny: two"], "expect": { "ok": true, "source": "a: 1\r\nb:\r\n  - x: 1\r\n    y: two\r\n  - y\r\n" } }
       ]
     },
     {

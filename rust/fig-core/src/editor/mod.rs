@@ -86,9 +86,10 @@ use std::sync::Arc;
 
 use self::regions::Region;
 use self::splice::{
-    append_block_sep, at_line_start, column_of, comment_block_start, continuation_end, find, find_any, find_byte,
-    find_byte_from, find_from, first_non_space, flow_open_end, full_order, is_flow, is_whitespace, line_end_after,
-    line_start_before, text_start, tile_blocks, trim, trim_end, trim_start, Block, Comments,
+    append_block_sep, at_line_start, column_of, comment_block_start, continuation_end, crlf_lines, find, find_any,
+    find_byte, find_byte_from, find_from, first_non_space, flow_open_end, full_order, is_flow, is_whitespace,
+    line_break_at, line_end_after, line_start_before, text_start, tile_blocks, trim, trim_end, trim_start, Block,
+    Comments,
 };
 use crate::err;
 use crate::kit::ast::{Node, NodeId, NodeKind, NodeTag, PathSegment, AST};
@@ -815,7 +816,7 @@ impl<'l> Editor<'l> {
         out.push(b'\n');
         out.extend_from_slice(base);
         out.extend_from_slice(delims.close);
-        self.replace_at_span(span, &out)
+        self.splice_lines(span, &out)
     }
 
     /// Whether `path`'s final segment names a key the document RESOLVES but
@@ -885,6 +886,33 @@ impl<'l> Editor<'l> {
             return Err(e);
         }
         Ok(())
+    }
+
+    /// `replace_at_span` for text this editor wrote: its lines end as the
+    /// line at `span` does (`line_break_at`), so an edit to a CRLF file
+    /// leaves it a CRLF file. A line break inside a value can be part of
+    /// it: TOML's `"""` and plist's `<string>` read a carriage return as
+    /// text. Where CRLF would change what the document reads as, the text
+    /// goes in as it was written.
+    fn splice_lines(&mut self, span: Span, text: &[u8]) -> Result<()> {
+        let spelled = match line_break_at(&self.source, span.start) {
+            b"\r\n" => crlf_lines(text),
+            _ => None,
+        };
+        let Some(spelled) = spelled else { return self.replace_at_span(span, text) };
+        let before = self.source.clone();
+        self.replace_at_span(span, text)?;
+        let plain = self.parsed()?;
+        let plain_bytes = self.source.clone();
+        self.restore_source(&before)?;
+        if self.replace_at_span(span, &spelled).is_ok() {
+            let crlf = self.parsed()?;
+            if nodes_equal_deep(&plain, plain.ast.root, &crlf, crlf.ast.root) {
+                return Ok(());
+            }
+        }
+        self.splice_rejected = false;
+        self.restore_source(&plain_bytes)
     }
 
     /// Replace the value at `path`. Reference-layer behavior is copy-on-write:
@@ -1011,11 +1039,11 @@ impl<'l> Editor<'l> {
         // splice it as written.
         if path.is_empty() {
             if !self.has_renderer(Renderer::Tail) {
-                return self.replace_at_span(span, &rendered);
+                return self.splice_lines(span, &rendered);
             }
             self.write_tail(&mut out, b"", b"", &rendered, place)?;
             self.terminate_line(&mut out, span.end);
-            return self.replace_at_span(Span::new(0, span.end), &out);
+            return self.splice_lines(Span::new(0, span.end), &out);
         }
         // A mapping value whose entry records its separator is REFRAMED:
         // everything after the key is rewritten through `write_tail`, so
@@ -1040,7 +1068,7 @@ impl<'l> Editor<'l> {
                 // A null value is a zero-width span at the separator.
                 let end = span.end.max(sep.end);
                 self.terminate_line(&mut out, end);
-                return self.replace_at_span(Span::new(from, end), &out);
+                return self.splice_lines(Span::new(from, end), &out);
             }
         }
         // The engine's veto, before anything is spliced — a target whose
@@ -1060,7 +1088,7 @@ impl<'l> Editor<'l> {
                 if let Some(sep) = self.syntax().kv_sep {
                     out.extend_from_slice(sep);
                     out.extend_from_slice(&rendered);
-                    return self.replace_at_span(span, &out);
+                    return self.splice_lines(span, &out);
                 }
             }
         }
@@ -1072,7 +1100,7 @@ impl<'l> Editor<'l> {
                 let indent = self.indent_at(m.start);
                 self.write_item(&mut out, &indent, &rendered, place)?;
                 self.terminate_line(&mut out, span.end);
-                return self.replace_at_span(Span::new(m.start, span.end), &out);
+                return self.splice_lines(Span::new(m.start, span.end), &out);
             }
         }
         // A block item spliced in place keeps its marker and what stands
@@ -1088,7 +1116,7 @@ impl<'l> Editor<'l> {
             let indent = self.indent_at(span.start);
             reindent_into(&mut out, &rendered, &indent);
             self.terminate_line(&mut out, span.end);
-            return self.replace_at_span(span, &out);
+            return self.splice_lines(span, &out);
         }
         // An empty value can sit right against a trailing comment, its
         // separating blank before it (dotenv's `A= #c`): the new text
@@ -1099,11 +1127,11 @@ impl<'l> Editor<'l> {
                 if source[span.end..].starts_with(c.open) {
                     out.extend_from_slice(&rendered);
                     out.push(b' ');
-                    return self.replace_at_span(span, &out);
+                    return self.splice_lines(span, &out);
                 }
             }
         }
-        self.replace_at_span(span, &rendered)
+        self.splice_lines(span, &rendered)
     }
 
     /// A reframe ends at `end`; when that byte sits at a LINE START —
@@ -1319,7 +1347,7 @@ impl<'l> Editor<'l> {
             let guard = self.replace_guard(&parsed, target, target.id == parsed.ast.root, replacement)?;
             let rendered = self.rendered_value(replacement, place_of_child(&parsed, target.id))?;
             let span = self.value_span_without_props(&parsed, target);
-            self.replace_at_span(span, &rendered)?;
+            self.splice_lines(span, &rendered)?;
             return self.reads_back(&guard);
         }
         self.replace_val_at_path(path, replacement)
@@ -1650,7 +1678,7 @@ impl<'l> Editor<'l> {
         };
         let mut buf = Vec::new();
         render_line_comments(&mut buf, indent, marker, text);
-        self.replace_at_span(Span::new(line_start, line_start), &buf)
+        self.splice_lines(Span::new(line_start, line_start), &buf)
     }
 
     /// The byte window `[start, line_end)` on the entry-at-`path`'s line where a
@@ -2016,7 +2044,7 @@ impl<'l> Editor<'l> {
             buf.push(b'\n');
         }
         render_line_comments(&mut buf, &anchor.indent, CommentDelimiter::open(marker), text);
-        self.replace_at_span(Span::new(at, at), &buf)
+        self.splice_lines(Span::new(at, at), &buf)
     }
 
     /// Remove the whole dangling run at the end of the container at
@@ -3799,7 +3827,7 @@ impl<'l> Editor<'l> {
             out.extend_from_slice(&indent);
             self.write_entry(&mut out, &indent, &key, &rendered, place)?;
             out.push(b'\n');
-            self.replace_at_span(Span::new(insert_at, insert_at), &out)?;
+            self.splice_lines(Span::new(insert_at, insert_at), &out)?;
         } else {
             self.insert_block_key(parsed, owner.holder, &key, value_text)?;
         }
@@ -4718,7 +4746,7 @@ impl<'l> Editor<'l> {
         out.extend_from_slice(&indent);
         self.write_entry(&mut out, &indent, key_text, &rendered, place)?;
         out.push(b'\n');
-        self.replace_at_span(Span::new(insert_at, insert_at), &out)
+        self.splice_lines(Span::new(insert_at, insert_at), &out)
     }
 
     // --- Whole-container structural editing (section formats) ---
@@ -4989,7 +5017,7 @@ impl<'l> Editor<'l> {
                 out.push(b'\n');
             }
         }
-        self.replace_at_span(Span::new(insert_at, insert_at), &out)
+        self.splice_lines(Span::new(insert_at, insert_at), &out)
     }
 
     /// Create a new container at `path` whose body is `body_text` (verbatim
@@ -5214,7 +5242,7 @@ impl<'l> Editor<'l> {
         out.extend_from_slice(&indent);
         self.write_item(&mut out, &indent, &rendered, place)?;
         out.push(b'\n');
-        self.replace_at_span(Span::new(insert_at, insert_at), &out)
+        self.splice_lines(Span::new(insert_at, insert_at), &out)
     }
 
     fn promote_null_to_mapping(
@@ -5258,7 +5286,7 @@ impl<'l> Editor<'l> {
         out.push(b'\n');
         out.extend_from_slice(&child);
         self.write_entry(&mut out, &child, key_text, &rendered, place)?;
-        self.replace_at_span(null_span, &out)
+        self.splice_lines(null_span, &out)
     }
 
     /// Reject `value_text` that has no flow spelling before it is spliced
@@ -5360,7 +5388,7 @@ impl<'l> Editor<'l> {
             out.extend_from_slice(key_text);
             out.extend_from_slice(sep);
             out.extend_from_slice(value_text);
-            return self.replace_at_span(Span::new(last_end, last_end), &out);
+            return self.splice_lines(Span::new(last_end, last_end), &out);
         }
         // Single-line layout: splice right after the last member's own
         // value — NOT right before the closing brace, which would land
@@ -5371,7 +5399,7 @@ impl<'l> Editor<'l> {
         out.extend_from_slice(key_text);
         out.extend_from_slice(sep);
         out.extend_from_slice(value_text);
-        self.replace_at_span(Span::new(last_end, last_end), &out)
+        self.splice_lines(Span::new(last_end, last_end), &out)
     }
 
     /// The bytes an insert writes between the last member of the
@@ -5436,7 +5464,7 @@ impl<'l> Editor<'l> {
         } else {
             flow_open_end(&self.source, span, syn.flow_map_open)
         };
-        self.replace_at_span(Span::new(at, at), &out)
+        self.splice_lines(Span::new(at, at), &out)
     }
 
     /// Insert `value_text` as the new last item of the flow sequence
@@ -5457,10 +5485,10 @@ impl<'l> Editor<'l> {
             let last_end = parsed.span(&last).end;
             self.write_joint(&mut out, parsed, node, joint)?;
             out.extend_from_slice(value_text);
-            return self.replace_at_span(Span::new(last_end, last_end), &out);
+            return self.splice_lines(Span::new(last_end, last_end), &out);
         }
         let at = self.flow_body_start(parsed, node, span);
-        self.replace_at_span(Span::new(at, at), value_text)
+        self.splice_lines(Span::new(at, at), value_text)
     }
 
     /// Insert `value_text` into the flow sequence `node`/`span` as the
@@ -5497,7 +5525,7 @@ impl<'l> Editor<'l> {
             }
             None => self.flow_body_start(parsed, node, span),
         };
-        self.replace_at_span(Span::new(at, at), &out)
+        self.splice_lines(Span::new(at, at), &out)
     }
 
     /// Where the first item of an EMPTY flow container goes: just after
@@ -5805,7 +5833,7 @@ fn is_quote(c: u8) -> bool {
 /// comma: spaces/tabs plus newlines, so a one-item-per-line layout is treated
 /// the same as a packed single-line layout.
 fn is_flow_item_ws(c: u8) -> bool {
-    c == b' ' || c == b'\t' || c == b'\n'
+    c == b' ' || c == b'\t' || c == b'\r' || c == b'\n'
 }
 
 /// How many direct entries of `mapping` repeat a string key an earlier entry

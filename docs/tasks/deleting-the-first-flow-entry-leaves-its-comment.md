@@ -1,12 +1,26 @@
 ```fig
 title = Deleting the first flow entry leaves its comment
 part_of = [Tasks](/docs/tasks/tasks.md)
-status = open
+status = done
 created = 2026-11-04
+updated = 2026-11-04
 description = Deleting a flow mapping's or sequence's first member leaves the comment on its line, which then reads as the next member's; a comment before the separator makes the same delete refuse, and a later member's delete already takes its comment
 ```
 
 # Deleting the first flow entry leaves its comment
+
+**Status.** Done, in `fix(editor): a flow member on its own line goes with its
+comments` (2026-11-04). `own_line_flow_item` now serves a first member as well
+as a later one, and an only member with no separator after it, and it reads a
+paired comment before the separator as the member's. A last member takes the
+comments ending its line in the backward scan, and an item of a comma sequence
+takes the comment block above it, as a mapping's entry already did. The shapes
+are in `rust/fig-core/tests/flow_delete.rs`. An emptied multi-line container
+now keeps its closing bracket's indent, which changed one ZON edit fixture.
+
+fig-conformance records the old splice in 23 edit cases (json 3, jsonc 5,
+json5 6, zon 8, figl 1, in each suite's `crlf`, `everything`, `comments` and
+`flow` sources), so its edit suites want re-recording from a fig with this fix.
 
 A delete of a flow member that stands on its own line should take that line,
 comment included. A later member's delete does. The first member's leaves the

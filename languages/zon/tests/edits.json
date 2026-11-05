@@ -23,7 +23,7 @@
       "source": ".{\n    .x = .{\n        1,\n    },\n    .b = .{ 1 },\n}\n",
       "steps": [
         { "op": "deleteItem", "args": [["b"], 0], "expect": { "ok": true, "source": ".{\n    .x = .{\n        1,\n    },\n    .b = .{ },\n}\n" } },
-        { "op": "deleteItem", "args": [["x"], 0], "expect": { "ok": true, "source": ".{\n    .x = .{\n        },\n    .b = .{ },\n}\n" } }
+        { "op": "deleteItem", "args": [["x"], 0], "expect": { "ok": true, "source": ".{\n    .x = .{\n    },\n    .b = .{ },\n}\n" } }
       ]
     },
     {

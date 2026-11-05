@@ -3022,10 +3022,10 @@ impl<'l> Editor<'l> {
     /// The block arm takes the item's whole owned block, from its leading
     /// comment run above its marker's line through its last line. The flow
     /// arm takes the item and one separator beside it (`remove_flow_item`),
-    /// the scan staying inside an open sequence's span. In a sequence the
-    /// parser gave a separator of its own, an item that begins its line
-    /// also takes the comment block above it, and the comment that ends
-    /// its last line when the next item is on a later one.
+    /// the scan staying inside an open sequence's span. An item that begins
+    /// its line also takes the comment block above it; in a sequence the
+    /// parser gave a separator of its own, it takes the comment that ends
+    /// its last line too when the next item is on a later one.
     ///
     /// The first item of a block sequence that shares its line with the
     /// sequence's own item marker (`- - a`) takes only its own text
@@ -3078,13 +3078,13 @@ impl<'l> Editor<'l> {
             let limit = if self.is_open(&parsed, node) { span } else { Span::new(0, source.len()) };
             let mut start = item_span.start;
             let mut end = item_span.end;
-            if joint.declared {
-                let line_start = line_start_before(source, start);
-                if first_non_space(source, line_start) == start {
-                    let cbs = comment_block_start(source, line_start, syn.comments);
-                    if cbs < line_start {
-                        start = first_non_space(source, cbs).max(limit.start);
-                    }
+            let line_start = line_start_before(source, start);
+            if first_non_space(source, line_start) == start {
+                let cbs = comment_block_start(source, line_start, syn.comments);
+                if cbs < line_start {
+                    start = first_non_space(source, cbs).max(limit.start);
+                }
+                if joint.declared {
                     let next_on_later_line = match parsed.ast.next(&item) {
                         Some(n) => {
                             line_start_before(source, parsed.span(&n).start)
@@ -5544,46 +5544,91 @@ impl<'l> Editor<'l> {
         Some(Span::new(ts, line_end))
     }
 
-    /// The splice for a later flow item that begins its line and has a
-    /// separator after it on that line: the item and that separator,
-    /// not the one before it. An item alone on its line takes the whole
-    /// line, with its trailing comment; one with a sibling after it leaves
-    /// that sibling where it stands. `None` when the item does not begin
-    /// its line or no separator follows it there, which the backward
-    /// splice handles.
-    fn own_line_flow_item(&self, item_span: Span, sep: &[u8], limit: Span) -> Option<Span> {
+    /// Where the paired comments after `from` end, with the spaces around
+    /// them: `a /* c */,` from the end of `a` is the comma. Such a comment
+    /// stands before the member's separator, so it is the member's.
+    fn past_paired_comments(&self, source: &[u8], from: usize) -> usize {
+        let mut i = first_non_space(source, from);
+        let Some(block) = self.syntax().comments.block else { return i };
+        if block.close.is_empty() {
+            return i;
+        }
+        while source[i..].starts_with(block.open) {
+            let Some(close) = find_from(source, i + block.open.len(), block.close) else { break };
+            i = first_non_space(source, close + block.close.len());
+        }
+        i
+    }
+
+    /// Where the line a flow member ends on ends, when nothing but comments
+    /// stands between `from` and there; `None` when anything else does.
+    fn comments_to_line_end(&self, source: &[u8], from: usize) -> Option<usize> {
+        let mut e = self.past_paired_comments(source, from);
+        if let Some(trail) = self.line_end_comment(e, b"") {
+            e = trail.end;
+        }
+        (e >= source.len() || source[e] == b'\n' || source[e] == b'\r').then_some(e)
+    }
+
+    /// Whether nothing but spaces stands before `item_span` on its line,
+    /// and that line starts inside `limit`.
+    fn begins_its_line(source: &[u8], item_span: Span, limit: Span) -> bool {
+        let line_start = line_start_before(source, item_span.start);
+        line_start >= limit.start && source[line_start..item_span.start].iter().all(|&c| c == b' ' || c == b'\t')
+    }
+
+    /// The splice for a flow item that begins its line and is the one to go
+    /// with the separator after it: any item with a separator after it on
+    /// that line, or a first item with no separator after it at all, which
+    /// is the only one. An item alone on its line takes the whole line, with
+    /// its comments; one with a sibling after it leaves that sibling where it
+    /// stands, and any comment before the sibling. `None` otherwise, which
+    /// the scans in `remove_flow_item` handle.
+    fn own_line_flow_item(&self, item_span: Span, is_first: bool, sep: &[u8], limit: Span) -> Option<Span> {
         if sep.is_empty() {
             return None;
         }
         let source = &self.source[..limit.end];
-        let line_start = line_start_before(source, item_span.start);
-        if line_start < limit.start {
+        if !Self::begins_its_line(source, item_span, limit) {
             return None;
         }
-        if source[line_start..item_span.start].iter().any(|&c| c != b' ' && c != b'\t') {
+        let after = self.past_paired_comments(source, item_span.end);
+        let e = if source[after..].starts_with(sep) {
+            first_non_space(source, after + sep.len())
+        } else if is_first {
+            let end = self.comments_to_line_end(source, after)?;
+            let mut next = end.min(source.len());
+            while next < source.len() && is_flow_item_ws(source[next]) {
+                next += 1;
+            }
+            if source[next..].starts_with(sep) {
+                return None;
+            }
+            after
+        } else {
             return None;
+        };
+        match self.comments_to_line_end(source, e) {
+            Some(end) => {
+                let line_end = line_end_after(source, end.min(source.len()));
+                Some(Span::new(line_start_before(source, item_span.start), line_end))
+            }
+            None => Some(Span::new(first_non_space(source, item_span.start), e)),
         }
-        let mut e = first_non_space(source, item_span.end);
-        if !source[e..].starts_with(sep) {
-            return None;
-        }
-        e = first_non_space(source, e + sep.len());
-        if let Some(trail) = self.line_end_comment(e, b"") {
-            e = trail.end;
-        }
-        if e >= source.len() || source[e] == b'\n' || source[e] == b'\r' {
-            return Some(Span::new(line_start, line_end_after(source, e)));
-        }
-        Some(Span::new(first_non_space(source, item_span.start), e))
     }
 
     /// Delete the flow item or member at `item_span` and exactly one
     /// separator beside it: the one after it when it is first, else the
     /// one before it, so the last of `a, b,` leaves `a,` and keeps a
-    /// trailing separator trailing. `sep` is the token the separator
-    /// is spelled with (`,`, a separated sequence's `|`), or empty for
-    /// items joined by whitespace alone. Nothing outside `limit` is taken.
+    /// trailing separator trailing. An item that begins its line takes the
+    /// comments after it on that line (`own_line_flow_item`). `sep` is the
+    /// token the separator is spelled with (`,`, a separated sequence's
+    /// `|`), or empty for items joined by whitespace alone. Nothing outside
+    /// `limit` is taken.
     fn remove_flow_item(&mut self, item_span: Span, is_first: bool, sep: &[u8], limit: Span) -> Result<()> {
+        if let Some(own) = self.own_line_flow_item(item_span, is_first, sep, limit) {
+            return self.replace_at_span(own, b"");
+        }
         let source = &self.source[..limit.end];
         if is_first {
             // Drop the item and a following ", " if present, consuming
@@ -5599,8 +5644,6 @@ impl<'l> Editor<'l> {
                 }
             }
             self.replace_at_span(Span::new(item_span.start, e), b"")
-        } else if let Some(own) = self.own_line_flow_item(item_span, sep, limit) {
-            self.replace_at_span(own, b"")
         } else {
             // Drop a preceding ", " and the item, scanning backward across
             // newlines to find the *previous* item's separator.
@@ -5614,7 +5657,13 @@ impl<'l> Editor<'l> {
                     s -= 1;
                 }
             }
-            self.replace_at_span(Span::new(s, item_span.end), b"")
+            let mut e = item_span.end;
+            if Self::begins_its_line(source, item_span, limit) {
+                if let Some(end) = self.comments_to_line_end(source, e) {
+                    e = end.min(source.len());
+                }
+            }
+            self.replace_at_span(Span::new(s, e), b"")
         }
     }
 

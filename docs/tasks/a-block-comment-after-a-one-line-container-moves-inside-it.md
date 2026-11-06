@@ -1,13 +1,29 @@
 ```fig
 title = A block comment after a one-line container moves inside it
 part_of = [Tasks](/docs/tasks/tasks.md)
-status = open
+status = done
 created = 2026-11-05
 updated = 2026-11-05
 description = In the canonical form, a /* */ comment after the close of a non-empty container written on one line prints beside its opening bracket and reparses as the first child's leading comment, so canonical_round_trip fails; the nightly Fuzz job still fails on it after the multi-line root fix
 ```
 
 # A block comment after a one-line container moves inside it
+
+**Status.** Done, in `fix(canonical): keep a block comment after a one-line
+container's close at its bottom`. The parser now asks what the printer will
+do: `prints_as_block` says whether a closed container has a child or a dangling
+comment, and a block comment after one goes to its dangling run. It reads the
+tree rather than the source between the brackets, which the throwaway version
+below did.
+
+An enumeration of short inputs found one more shape by the same door: `[]/*a*//*a*/`,
+an empty root whose end-of-file orphan makes it print as a block after the
+first comment had already been bound as its trailing one. `parse_once` now
+reads those orphans before it places the comment. With that, all 73.2 million
+sequences of up to seven tokens from brackets, commas, a number, a key, both
+comment styles, whitespace, an anchor and an alias passed
+`canonical_round_trip`. Whether the nightly `Fuzz` run agrees is for its next
+run to say.
 
 **Where.** `rust/fig-core/src/canonical/parser.rs`, `parse_once` and
 `finish_element`, against `printer.rs`, `container` and `is_block_container`.

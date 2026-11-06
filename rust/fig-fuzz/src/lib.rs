@@ -185,6 +185,10 @@ pub fn canonical_seeds() -> Vec<Vec<u8>> {
         // beside its opening bracket and reparsed inside it.
         b"{\n//\n}/**/".to_vec(),
         b"[\n// a\n] /* b */".to_vec(),
+        // The same comment after a container written on one line, which prints
+        // as a block all the same.
+        b"[1]/**/".to_vec(),
+        b"{\"\":[/**/]/**/}".to_vec(),
         format!("{}{}", "[".repeat(512), "]".repeat(512)).into_bytes(),
         format!("{}{}", "[".repeat(513), "]".repeat(513)).into_bytes(),
     ];

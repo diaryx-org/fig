@@ -95,20 +95,23 @@ impl Parser {
         self.claim_leading(root)?;
         // A trailing comment on the same line as the root, then the document's final
         // trivia; any end-of-file orphan comments become the root's dangling run.
-        // The printer writes a container's trailing comment beside its opening
+        // The printer writes a block container's trailing comment beside its opening
         // bracket, where `capture_open_trailing` takes back only a line comment;
-        // so a block comment after a multi-line root's close is a bottom comment,
-        // as `finish_element` has it after a nested container's.
+        // so a block comment after such a root's close is a bottom comment, as
+        // `finish_element` has it after a nested container's. The orphans after it
+        // are read first: they make an empty root print as a block too.
         self.skip_inline();
         let cpos = self.pos;
-        if let Some(c) = self.try_comment()? {
-            if c.style == Style::Block && self.multiline_container(root, cpos) {
+        let after_close = self.try_comment()?;
+        self.collect_leading()?;
+        if let Some(c) = after_close {
+            let block_root = self.multiline_container(root, cpos) || self.prints_as_block(root) || self.is_container_with_orphans(root);
+            if c.style == Style::Block && block_root {
                 self.append_dangling(root, c)?;
             } else {
                 self.set_trailing(root, c)?;
             }
         }
-        self.collect_leading()?;
         self.claim_dangling(root)?;
         if self.peek().is_some() {
             return Err(err!(TrailingGarbage));
@@ -623,6 +626,23 @@ impl Parser {
         self.src[open..cpos].contains(&b'\n')
     }
 
+    /// Whether closed container `id` is one the printer writes as a block, whatever
+    /// its source looked like: `is_block_container` there, asked of a row still
+    /// being written. A childless container's `dangling` run, claimed at its close,
+    /// holds the last comment written, so the end of the table answers for it.
+    fn prints_as_block(&mut self, id: NodeId) -> bool {
+        let first_child = match RowWriter::init(&mut self.t).kind_of(id) {
+            NodeKind::Sequence(first) | NodeKind::Mapping(first) => first,
+            _ => return false,
+        };
+        first_child.is_some() || self.t.comments.last().is_some_and(|c| c.node == id && c.slot == table::COMMENT_DANGLING)
+    }
+
+    /// Whether `id` is a container that orphans still buffered will land in.
+    fn is_container_with_orphans(&mut self, id: NodeId) -> bool {
+        !self.pending_leading.is_empty() && matches!(RowWriter::init(&mut self.t).kind_of(id), NodeKind::Sequence(_) | NodeKind::Mapping(_))
+    }
+
     /// Append one comment to `id`'s `dangling` run, after any orphans already
     /// claimed at the close.
     fn append_dangling(&mut self, id: NodeId, c: PendingComment) -> Result<()> {
@@ -655,8 +675,11 @@ impl Parser {
         let cpos = self.pos;
         if let Some(c) = self.try_comment()? {
             // A comment after a multi-line container's close is a bottom comment →
-            // its `dangling` run; a scalar or inline container keeps the trailing.
-            if self.multiline_container(trailing_target, cpos) {
+            // its `dangling` run, and so is a block comment after any container the
+            // printer writes as a block, since only a line comment comes back from
+            // beside its opening bracket. A scalar or inline container keeps the
+            // trailing.
+            if self.multiline_container(trailing_target, cpos) || (c.style == Style::Block && self.prints_as_block(trailing_target)) {
                 self.append_dangling(trailing_target, c)?;
             } else {
                 self.set_trailing(trailing_target, c)?;
@@ -853,12 +876,63 @@ mod tests {
         assert!(ast.comments(ast.root).trailing.is_none());
         assert_eq!(b"b", ast.comments(ast.root).dangling[0].text);
         // A line comment there stays the root's trailing comment, printed beside
-        // the opening bracket, and an inline root keeps a block comment after its
-        // close.
+        // the opening bracket, and a root that prints inline, which is an empty
+        // one, keeps a block comment after its close.
         let line = parse_abstract(b"{\n\"k\": 1\n} // b").unwrap();
         assert_eq!(b"b", line.comments(line.root).trailing.unwrap().text);
         expect_round_trip(b"{\n\"k\": 1\n} // b");
         expect_round_trip(b"{} /* b */");
+    }
+
+    /// A container's source does not say where a block comment after its close
+    /// prints: one with a child or a dangling comment prints as a block, however
+    /// it was written, so the comment is a bottom comment there too. The last
+    /// input is the nightly fuzz job's smallest failing input.
+    #[test]
+    fn a_block_comment_after_a_one_line_containers_close_stays_at_its_bottom() {
+        for input in [
+            &b"[1] /* b */"[..],
+            b"[1]/**/",
+            b"{\"k\":1} /*b*/",
+            b"{\"k\": [1] /* b */}",
+            b"[/*a*/] /*b*/",
+            b"{/*a*/} /*b*/",
+            b"[[1] /*b*/]",
+            b"[[1], /*b*/ 2]",
+            b"[&a !t [1] /*b*/]",
+            b"[1] /*a*/ /*b*/",
+            b"[] /*a*/ /*b*/",
+            b"{}/*a*///c\n",
+            b"{\"\":[/**/]/**/}",
+        ] {
+            expect_round_trip(input);
+        }
+        let root = parse_abstract(b"[1] /* b */").unwrap();
+        assert!(root.comments(root.root).trailing.is_none());
+        assert_eq!(b"b", root.comments(root.root).dangling[0].text);
+        let nested = parse_abstract(b"[[1] /* b */]").unwrap();
+        let inner = nested.kind_of(nested.root).as_sequence().unwrap().unwrap();
+        assert!(nested.comments(inner).trailing.is_none());
+        assert_eq!(b"b", nested.comments(inner).dangling[0].text);
+        let run = parse_abstract(b"[/*a*/] /*b*/").unwrap();
+        let texts: Vec<&[u8]> = run.comments(run.root).dangling.iter().map(|c| c.text).collect();
+        assert_eq!(vec![&b"a"[..], b"b"], texts);
+    }
+
+    /// What prints inline, or takes its comment back beside the opening bracket,
+    /// keeps the comment as its trailing one.
+    #[test]
+    fn a_comment_the_printer_gives_back_stays_trailing_after_a_one_line_close() {
+        for input in [&b"[] /*b*/"[..], b"[[] /*b*/]", b"[1] // b", b"[[1] // b\n]", b"[[\n1\n] /*b*/]", b"1 /*a*/ /*b*/", b"[] //a\n/*b*/"] {
+            expect_round_trip(input);
+        }
+        let empty = parse_abstract(b"[] /*b*/").unwrap();
+        assert_eq!(b"b", empty.comments(empty.root).trailing.unwrap().text);
+        let line = parse_abstract(b"[1] // b").unwrap();
+        assert_eq!(b"b", line.comments(line.root).trailing.unwrap().text);
+        let nested = parse_abstract(b"[[1] // b\n]").unwrap();
+        let inner = nested.kind_of(nested.root).as_sequence().unwrap().unwrap();
+        assert_eq!(b"b", nested.comments(inner).trailing.unwrap().text);
     }
 
     #[test]

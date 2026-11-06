@@ -1,13 +1,30 @@
 ```fig
 title = A flow insert copies a separator from a nested rule
 part_of = [Tasks](/docs/tasks/tasks.md)
-status = open
+status = done
 created = 2026-11-06
 updated = 2026-11-06
 description = With flow_kv_sep_from_siblings, an insert takes its key-value separator from the first member and its joint from the gap after it; a fig-css nested rule has neither, so a declaration added to a block that opens with one is refused as NotFound or UnsupportedOperation
 ```
 
 # A flow insert copies a separator from a nested rule
+
+**Status.** Done, in `fix(editor): a flow insert copies only a separator a
+member wrote`. The test of a usable sibling is whether the bytes between its key
+and value hold anything but space, which was simpler than comparing them with
+`kv_sep` and is right for figl's `:`-mode, whose `: ` is not its `kv_sep`. An
+insert copies from the first member that passes, and takes the joint from the
+gap after that member. With none to copy, it writes what an empty mapping would
+for the separator and the default joint. figl requires `=` or `:` in a flow
+object, so every member there passes and nothing changes; `edits.json` now holds
+`{a={b=1}}`, `{a={b=1}, c=2}` and the JSON-embedded form to say so.
+`bindings/rust/fig/tests/sibling_separators.rs` holds the rest, with a small
+registered language.
+
+Run against fig-css at 601c5c2 through a `[patch.crates-io]`, each failing `set`
+below returns `Ok`, and `with_declaration("&:hover{b:c}", "a", Some("blue"))`
+returns `&:hover{b:c}; a: blue`, whose `declaration` for `a` is `blue`. What is
+left is fig-css taking this at fig's next release.
 
 **Where.** `rust/fig-core/src/editor/mod.rs`, `insert_flow_map_entry` and
 `flow_map_joint`, for a dialect that sets `flow_kv_sep_from_siblings`.

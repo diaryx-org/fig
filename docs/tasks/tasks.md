@@ -20,6 +20,7 @@ contents
 > * [An inserted line ends in LF in a CRLF file](/docs/tasks/an-inserted-line-ends-in-lf-in-a-crlf-file.md)
 > * [Deleting the first flow entry leaves its comment](/docs/tasks/deleting-the-first-flow-entry-leaves-its-comment.md)
 > * [A block comment after a one-line container moves inside it](/docs/tasks/a-block-comment-after-a-one-line-container-moves-inside-it.md)
+> * [A flow insert copies a separator from a nested rule](/docs/tasks/a-flow-insert-copies-a-separator-from-a-nested-rule.md)
 ```
 
 # Tasks

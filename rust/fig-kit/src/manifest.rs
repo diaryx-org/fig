@@ -511,10 +511,12 @@ pub struct Syntax {
     /// FIRST entry uses — the bytes between that entry's key and value —
     /// rather than writing `kv_sep`. True for fig, whose flow objects are
     /// either `=`-mode or `:`-mode (JSON-embedded) and may not mix the two,
-    /// so the right separator is whichever the object already uses. An empty
-    /// flow mapping has no first entry and takes `flow_map_kv_sep`, or else
-    /// `kv_sep`. With it, an insert into a flow object whose first two
-    /// members share a line also copies the bytes between them.
+    /// so the right separator is whichever the object already uses. An entry
+    /// with only space there has no separator to copy and is passed over, as
+    /// a nested rule in a CSS block is. A flow mapping with no entry to copy,
+    /// an empty one among them, takes `flow_map_kv_sep`, or else `kv_sep`.
+    /// With it, an insert into a flow object also copies the bytes after the
+    /// first entry with a separator, when the next member shares its line.
     pub flow_kv_sep_from_siblings: bool,
 
     /// Bytes written inside the braces around a freshly created single

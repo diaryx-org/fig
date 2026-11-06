@@ -352,6 +352,16 @@
       ]
     },
     {
+      "id": "insert key after a flow mapping's nested object copies the separators beside it",
+      "note": "The bytes before a nested object's `{` are a real separator here, as they are not before a CSS rule's block.",
+      "source": "p = {a={b=1}}\nq = {a={b=1}, c=2}\nr = {\"a\": {\"b\": 1}}\n",
+      "steps": [
+        { "op": "insertValue", "args": [["p"], "x", 1], "expect": { "ok": true, "source": "p = {a={b=1} x=1}\nq = {a={b=1}, c=2}\nr = {\"a\": {\"b\": 1}}\n" } },
+        { "op": "insertValue", "args": [["q"], "x", 1], "expect": { "ok": true, "source": "p = {a={b=1} x=1}\nq = {a={b=1}, c=2, x=1}\nr = {\"a\": {\"b\": 1}}\n" } },
+        { "op": "insertValue", "args": [["r"], "\"x\"", 1], "expect": { "ok": true, "source": "p = {a={b=1} x=1}\nq = {a={b=1}, c=2, x=1}\nr = {\"a\": {\"b\": 1}, \"x\": 1}\n" } }
+      ]
+    },
+    {
       "id": "insert key into a multi-line compact flow mapping writes no comma",
       "source": "p = {\n  a=1\n}\n",
       "steps": [

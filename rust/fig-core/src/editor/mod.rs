@@ -5358,16 +5358,23 @@ impl<'l> Editor<'l> {
             last_end = last_end.max(self.flow_entry_end(parsed, kv)?);
             each = parsed.ast.next(&kv);
         }
-        // The separator: `kv_sep`, or the bytes the first entry writes
-        // between its key and value for a format whose flow objects fix
-        // their own mode. See `Syntax.flow_kv_sep_from_siblings`.
+        // The separator: `kv_sep`, or the bytes the first entry that has any
+        // writes between its key and value for a format whose flow objects
+        // fix their own mode. See `Syntax.flow_kv_sep_from_siblings`.
         let sep: &[u8] = if syn.flow_kv_sep_from_siblings {
-            let first_id = node.kind.as_mapping().flatten().ok_or(err!(NotFound))?;
-            let first = first_written_leaf(parsed, parsed.ast.node(first_id));
-            let kv = kv_of(&first);
-            let key_end = parsed.span(&parsed.ast.node(kv.key)).end;
-            let value_start = parsed.span(&parsed.ast.node(kv.value)).start;
-            &source[key_end..value_start]
+            let mut copied = None;
+            let mut each = parsed.ast.child(&node)?;
+            while let Some(member) = each {
+                copied = written_kv_sep(source, parsed, member);
+                if copied.is_some() {
+                    break;
+                }
+                each = parsed.ast.next(&member);
+            }
+            match copied {
+                Some(sep) => sep,
+                None => self.new_flow_kv_sep()?,
+            }
         } else {
             self.kv_sep()?
         };
@@ -5406,19 +5413,26 @@ impl<'l> Editor<'l> {
     /// non-empty flow mapping `node` and a new one on its line, the new
     /// one's key and value parted by `kv`. A format that copies its flow
     /// separators (`Syntax.flow_kv_sep_from_siblings`) takes the bytes
-    /// between the first two members when they share a line and hold
-    /// nothing but spaces and at most one `flow_entry_sep`. Otherwise an
-    /// object whose entries are spelled with `flow_map_kv_sep` is joined by
-    /// `flow_map_entry_sep` (fig's `{a=1 b=2}`), and any other by
+    /// between the first member with a key-value separator of its own and
+    /// the member after it, when they share a line and hold nothing but
+    /// spaces and at most one `flow_entry_sep`. A member with no separator
+    /// is passed over, since what ends it says nothing of what ends the
+    /// others: a nested rule in CSS needs nothing after its `}`. Otherwise
+    /// an object whose entries are spelled with `flow_map_kv_sep` is joined
+    /// by `flow_map_entry_sep` (fig's `{a=1 b=2}`), and any other by
     /// `flow_entry_sep` and a space.
     fn flow_map_joint<'a>(&'a self, parsed: &Document, node: Node<'_>, kv: &[u8]) -> Result<Joint<'a>> {
         let source = &self.source[..];
         let syn = self.syntax();
         if syn.flow_kv_sep_from_siblings {
-            let first = present(parsed.ast.child(&node)?)?;
-            if let Some(second) = parsed.ast.next(&first) {
-                let from = parsed.span(&first_written_leaf(parsed, first)).end;
-                let to = flow_entry_start(parsed, second);
+            let mut member = present(parsed.ast.child(&node)?)?;
+            while let Some(next) = parsed.ast.next(&member) {
+                if written_kv_sep(source, parsed, member).is_none() {
+                    member = next;
+                    continue;
+                }
+                let from = parsed.span(&first_written_leaf(parsed, member)).end;
+                let to = flow_entry_start(parsed, next);
                 if to > from {
                     let gap = &source[from..to];
                     let joint = Joint::split(gap, false);
@@ -5428,6 +5442,7 @@ impl<'l> Editor<'l> {
                         return Ok(joint);
                     }
                 }
+                break;
             }
         }
         let ws: &[u8] = b" \t";
@@ -5438,6 +5453,14 @@ impl<'l> Editor<'l> {
             return Ok(Joint::split(syn.flow_map_entry_sep, false));
         }
         Ok(Joint { lead: b"", token: syn.flow_entry_sep, trail: b" ", declared: false })
+    }
+
+    /// The separator of a flow entry with no neighbour to copy. A format
+    /// that spells flow entries apart from block ones says how:
+    /// `Syntax.flow_map_kv_sep`.
+    fn new_flow_kv_sep(&self) -> Result<&'static [u8]> {
+        let kv = self.syntax().flow_map_kv_sep;
+        if kv.is_empty() { self.kv_sep() } else { Ok(kv) }
     }
 
     /// Insert the first entry into an EMPTY flow mapping (`{}` / ZON's
@@ -5451,10 +5474,7 @@ impl<'l> Editor<'l> {
         let pad: &[u8] = if open_root { b"" } else { syn.flow_map_pad };
         out.extend_from_slice(pad);
         out.extend_from_slice(key_text);
-        // A format that spells flow entries apart from block ones says
-        // how: `Syntax.flow_map_kv_sep`.
-        let kv = syn.flow_map_kv_sep;
-        out.extend_from_slice(if !kv.is_empty() { kv } else { self.kv_sep()? });
+        out.extend_from_slice(self.new_flow_kv_sep()?);
         out.extend_from_slice(value_text);
         out.extend_from_slice(pad);
         // Just after '{' (or ZON's '.{'); an open root has no opener, and
@@ -5920,6 +5940,20 @@ fn flow_entry_start(parsed: &Document, kv: Node<'_>) -> usize {
         }
     }
     parsed.span(&kv).start
+}
+
+/// The bytes the flow member `member` writes between its key and value, or
+/// `None` where they hold nothing but space. A member like that has no
+/// separator to copy: fig-css reads a rule nested in a block as a selector
+/// over a mapping, so `&:hover { b: c }` has a space before its value and
+/// `&:hover{b:c}` nothing, where a declaration beside it writes `: `.
+fn written_kv_sep<'s>(source: &'s [u8], parsed: &Document, member: Node<'_>) -> Option<&'s [u8]> {
+    let leaf = first_written_leaf(parsed, member);
+    let kv = kv_of(&leaf);
+    let key_end = parsed.span(&parsed.ast.node(kv.key)).end;
+    let value_start = parsed.span(&parsed.ast.node(kv.value)).start;
+    let sep = &source[key_end..value_start];
+    (!trim(sep, b" \t\r\n").is_empty()).then_some(sep)
 }
 
 /// The value of the entry `kv` when it is a table made by dotted keys,

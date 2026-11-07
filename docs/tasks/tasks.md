@@ -21,6 +21,7 @@ contents
 > * [Deleting the first flow entry leaves its comment](/docs/tasks/deleting-the-first-flow-entry-leaves-its-comment.md)
 > * [A block comment after a one-line container moves inside it](/docs/tasks/a-block-comment-after-a-one-line-container-moves-inside-it.md)
 > * [A flow insert copies a separator from a nested rule](/docs/tasks/a-flow-insert-copies-a-separator-from-a-nested-rule.md)
+> * [A comment in an empty container used as a key is dropped](/docs/tasks/a-comment-in-an-empty-key-container-is-dropped.md)
 ```
 
 # Tasks

@@ -103,7 +103,7 @@ impl Printer<'_> {
             NodeKind::Sequence(first_child) => self.container(id, b'[', b']', first_child, depth)?,
             NodeKind::Mapping(first_child) => self.container(id, b'{', b'}', first_child, depth)?,
             NodeKind::KeyValue(kv) => {
-                self.node(kv.key, depth)?;
+                self.key(kv.key, depth)?;
                 self.out.extend_from_slice(b": ");
                 // A comment between the `:` and the value is the value's leading
                 // comment (the parser's `claim_leading(value)`), and it stays
@@ -123,6 +123,30 @@ impl Printer<'_> {
                 self.node(kv.value, depth)?;
             }
         }
+        Ok(())
+    }
+
+    /// Print an entry's key. An empty container prints inline and leaves its
+    /// trailing comment to whoever writes its line, but an entry's line writes
+    /// its value's, and the parser refuses a comment between a key and its `:`.
+    /// So an empty key with a trailing comment prints as a block, the comment
+    /// beside its opener, where `capture_open_trailing` reads it back. Nothing
+    /// here recurses, so like the inline path it needs no depth guard.
+    fn key(&mut self, id: NodeId, depth: usize) -> Result<()> {
+        let (open, close) = match self.ast.kind_of(id) {
+            NodeKind::Sequence(None) => (b'[', b']'),
+            NodeKind::Mapping(None) => (b'{', b'}'),
+            _ => return self.node(id, depth),
+        };
+        if self.is_block_container(id) || self.ast.comments(id).trailing.is_none() {
+            return self.node(id, depth);
+        }
+        self.prefixes(id);
+        self.out.push(open);
+        self.trailing_comment(id);
+        self.out.push(b'\n');
+        self.write_indent(depth);
+        self.out.push(close);
         Ok(())
     }
 

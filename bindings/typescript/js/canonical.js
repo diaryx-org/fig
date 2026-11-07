@@ -423,9 +423,28 @@ function writeContainer(w, row, open, close, depth) {
   return w;
 }
 
-writeNode = (w, row, depth) => {
+function writePrefixes(w, row) {
   if (row.anchor !== undefined) w.put("&", row.anchor, " ");
   if (row.tag !== undefined) w.put(row.tag, " ");
+}
+
+// An entry's line writes its value's trailing comment, and nothing may come
+// between a key and its `:`, so an empty key with a trailing comment prints
+// as a block, the comment beside its opener, as the compiled printer's does.
+function writeKey(w, row, depth) {
+  if (!isInline(row) || !row.trailing[0]) return writeNode(w, row, depth);
+  const [open, close] = row.kind === "sequence" ? "[]" : "{}";
+  writePrefixes(w, row);
+  w.put(open, " ");
+  writeComment(w, row.trailing[0]);
+  w.put("\n");
+  indent(w, depth);
+  w.put(close);
+  return w;
+}
+
+writeNode = (w, row, depth) => {
+  writePrefixes(w, row);
   const k = row.kind;
   if (k === "null") {
     w.put("null");
@@ -444,7 +463,7 @@ writeNode = (w, row, depth) => {
   } else if (k === "mapping") {
     writeContainer(w, row, "{", "}", depth);
   } else if (k === "keyvalue") {
-    writeNode(w, row.key, depth);
+    writeKey(w, row.key, depth);
     w.put(": ");
     // A comment between the `:` and the value is the value's leading
     // comment, and stays between them: a block one on the line, a line one

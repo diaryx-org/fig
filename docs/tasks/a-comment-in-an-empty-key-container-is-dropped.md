@@ -1,13 +1,20 @@
 ```fig
 title = A comment in an empty container used as a key is dropped
 part_of = [Tasks](/docs/tasks/tasks.md)
-status = open
+status = done
 created = 2026-11-06
-updated = 2026-11-06
+updated = 2026-11-07
 description = In the canonical form, a line comment after the opening bracket of an empty container that is a mapping key is read as the key's trailing comment, which nothing prints, so the comment is lost and canonical_round_trip fails
 ```
 
 # A comment in an empty container used as a key is dropped
+
+**Status.** Done, in `fix(canonical): keep a comment in an empty key beside its
+opener`. The `KeyValue` arm writes its key through `Printer::key`, which prints
+an empty container holding a trailing comment as a block, as proposed below.
+`bindings/typescript/js/canonical.js`, which this task did not name, lost the
+comment the same way, and its `writeKey` keeps the two printers alike.
+`{[//\n]:1}` is one of `canonical_seeds`.
 
 **Where.** `rust/fig-core/src/canonical/printer.rs`, the `KeyValue` arm of
 `node` and the inline path of `container`, against `capture_open_trailing` in

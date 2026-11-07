@@ -189,6 +189,8 @@ pub fn canonical_seeds() -> Vec<Vec<u8>> {
         // as a block all the same.
         b"[1]/**/".to_vec(),
         b"{\"\":[/**/]/**/}".to_vec(),
+        // A comment in an empty container used as a key, which printed nowhere.
+        b"{[//\n]:1}".to_vec(),
         format!("{}{}", "[".repeat(512), "]".repeat(512)).into_bytes(),
         format!("{}{}", "[".repeat(513), "]".repeat(513)).into_bytes(),
     ];

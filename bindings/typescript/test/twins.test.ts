@@ -219,6 +219,17 @@ test("each language prints every fixture as the compiled printer did", () => {
   }
 });
 
+test("the canonical twin keeps an empty key's comment beside its opener, as the compiled printer does", () => {
+  const format = canonical.format!;
+  const printed = "{\n  [ // why\n  ]: 1\n}\n";
+  assert.equal(convert("{[// why\n]:1}", format, format), printed);
+  assert.equal(convert(printed, format, format), printed);
+  assert.equal(convert("{{//\n}:1}", format, format), "{\n  { //\n  }: 1\n}\n");
+  assert.equal(convert("{&x [// a\n]: 1}", format, format), "{\n  &x [ // a\n  ]: 1\n}\n");
+  // A value's comment is still written after the value, by its line.
+  assert.equal(convert('{"k": [// why\n]}', format, format), '{\n  "k": [] // why\n}\n');
+});
+
 test("each language converts every fixture to the JSON the compiled format did", () => {
   const recorded = TWINS.flatMap((t) => t.dialects.flatMap((d) => fixtures(d.name, d.ext).filter((f) => f.converted !== null)));
   assert.ok(recorded.length > 100, "recordings present");

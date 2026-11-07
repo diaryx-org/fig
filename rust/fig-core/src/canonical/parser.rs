@@ -935,6 +935,37 @@ mod tests {
         assert_eq!(b"b", nested.comments(inner).trailing.unwrap().text);
     }
 
+    /// A key's line goes on to its value, so nothing past a key's close can hold
+    /// the comment an empty key took after its opening bracket: the key prints
+    /// as a block, and the comment stays beside the opener.
+    #[test]
+    fn a_comment_in_an_empty_container_used_as_a_key_stays_beside_its_opener() {
+        for input in [
+            &b"{[//\n]:1}"[..],
+            b"{{//\n}:1}",
+            b"[{[//\n]:1}]",
+            b"{[// a\n]: {[// b\n]: 2}}",
+            b"{&x [// a\n]: 1}",
+            b"{{[// a\n]: 1}: 2}",
+        ] {
+            expect_round_trip(input);
+        }
+        let ast = parse_abstract(b"{\n  [ // why\n  ]: 1\n}\n").unwrap();
+        let mut out = Vec::new();
+        print(&mut out, &ast).unwrap();
+        assert_eq!("{\n  [ // why\n  ]: 1\n}\n", String::from_utf8_lossy(&out));
+    }
+
+    /// The deepest container the parser accepts can be such a key: its block
+    /// must print where an inline one would.
+    #[test]
+    fn a_commented_empty_key_at_the_nesting_limit_prints() {
+        let mut input = "{\"\":".repeat(MAX_DEPTH - 2).into_bytes();
+        input.extend_from_slice(b"{[//\n]:1}");
+        input.extend_from_slice("}".repeat(MAX_DEPTH - 2).as_bytes());
+        expect_round_trip(&input);
+    }
+
     #[test]
     fn container_comment_opening_line_is_head_closing_line_is_bottom() {
         expect_round_trip(b"{\n  \"a\": [ // head\n    1\n  ],\n  \"b\": [\n    2\n    // tail\n  ]\n}");

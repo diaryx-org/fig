@@ -1,13 +1,19 @@
 ```fig
 title = The lossless envelope's placeholders read as HTML on docs.rs
 part_of = [Tasks](/docs/tasks/tasks.md)
-status = open
+status = done
 created = 2026-11-07
-updated = 2026-11-07
+updated = 2026-11-10
 description = fig_core::lossless's module docs write the envelope schema as a two-space-indented paragraph, so rustdoc passes <type>, <extkind> and <text> to the browser as HTML tags: docs.rs shows the schema with its placeholders missing, and cargo doc warns three times
 ```
 
 # The lossless envelope's placeholders read as HTML on docs.rs
+
+**Status.** Done, in `docs(core): fence the lossless envelope schema in a code
+block`. The two schema lines are a fenced `text` block, so rustdoc escapes
+`<type>`, `<extkind>` and `<text>`, and `RUSTDOCFLAGS='-D warnings' cargo doc
+-p fig-core --no-deps` passes. The docs.rs page shows them from the next
+release.
 
 **Where.** `rust/fig-core/src/lossless.rs`, lines 34–39 of the module doc.
 

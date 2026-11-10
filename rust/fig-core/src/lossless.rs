@@ -32,8 +32,12 @@
 //! pure node-kind transforms.
 //!
 //! Envelope schema, as it appears once parsed back into an AST:
-//!   { "$fig": { "t": "<type>" } }            // a null
-//!   { "$fig": { "t": "<extkind>", "v": "<text>" } }   // an extended scalar
+//!
+//! ```text
+//! { "$fig": { "t": "<type>" } }                     // a null
+//! { "$fig": { "t": "<extkind>", "v": "<text>" } }   // an extended scalar
+//! ```
+//!
 //! where `<type>` is `"null"` and `<extkind>` is the `ExtKind` field name
 //! (`offset_datetime`, `enum_literal`, …). `v` carries the scalar's intrinsic
 //! text verbatim (for a char literal, its decimal codepoint, as fig stores it).
